@@ -12,6 +12,9 @@ migrations_dir = "migrations"
 binding = "KV"
 id = "2e38018dc76f4fa9b3fe007c805517c7"
 
+[ai]
+binding = "AI"
+
 [vars]
 ENVIRONMENT = "development"
 
@@ -27,6 +30,9 @@ migrations_dir = "migrations"
 binding = "KV"
 id = "2e38018dc76f4fa9b3fe007c805517c7"
 
+[env.preview.ai]
+binding = "AI"
+
 [env.preview.vars]
 ENVIRONMENT = "development"
 
@@ -41,6 +47,9 @@ migrations_dir = "migrations"
 [[env.production.kv_namespaces]]
 binding = "KV"
 id = "2e38018dc76f4fa9b3fe007c805517c7"
+
+[env.production.ai]
+binding = "AI"
 
 [env.production.vars]
 ENVIRONMENT = "production"
