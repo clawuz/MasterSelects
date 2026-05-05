@@ -1,0 +1,281 @@
+// ImageCropper - Pan and zoom image editor for AI video frame input
+// Shows exact crop that will be sent to the API
+
+import { useState, useRef, useCallback, useEffect } from 'react';
+
+interface ImageCropperProps {
+  imageUrl: string | null;
+  aspectRatio: { width: number; height: number };
+  onClear: () => void;
+  onCropChange: (cropData: CropData) => void;
+  disabled?: boolean;
+  label: string;
+  onDropOrClick: () => void;
+  onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
+  onUseCurrentFrame: () => void;
+}
+
+export interface CropData {
+  offsetX: number;  // -1 to 1, 0 = centered
+  offsetY: number;  // -1 to 1, 0 = centered
+  scale: number;    // 1 = fit, >1 = zoomed in
+}
+
+export function ImageCropper({
+  imageUrl,
+  aspectRatio,
+  onClear,
+  onCropChange,
+  disabled,
+  label,
+  onDropOrClick,
+  onDrop,
+  onUseCurrentFrame,
+}: ImageCropperProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Crop state
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [scale, setScale] = useState(1);
+
+  // Image natural dimensions
+  const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
+
+  // Track previous imageUrl to detect changes
+  const prevImageUrlRef = useRef<string | null>(null);
+
+  // Reset crop when image changes and load dimensions
+  useEffect(() => {
+    // Reset crop when image changes
+    if (imageUrl !== prevImageUrlRef.current) {
+      prevImageUrlRef.current = imageUrl;
+      // Use setTimeout to batch state updates
+      setTimeout(() => {
+        setOffset({ x: 0, y: 0 });
+        setScale(1);
+      }, 0);
+    }
+
+    if (!imageUrl) {
+      queueMicrotask(() => setImageDimensions({ width: 0, height: 0 }));
+      return;
+    }
+
+    const img = new Image();
+    img.onload = () => {
+      setImageDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.src = imageUrl;
+  }, [imageUrl]);
+
+  // Notify parent of crop changes
+  useEffect(() => {
+    onCropChange({
+      offsetX: offset.x,
+      offsetY: offset.y,
+      scale,
+    });
+  }, [offset, scale, onCropChange]);
+
+  // Calculate image transform style
+  // Note: CSS object-fit: cover already makes image cover the container at scale=1
+  const getImageStyle = useCallback(() => {
+    if (!imageUrl || !imageDimensions.width) return {};
+
+    // At scale=1, image covers container (object-fit: cover handles this)
+    // scale > 1 means zooming in further
+
+    // Calculate how much the image overflows the container when scaled
+    const containerAspect = aspectRatio.width / aspectRatio.height;
+    const imageAspect = imageDimensions.width / imageDimensions.height;
+
+    // Determine overflow based on which dimension is "excess" after cover
+    let overflowX = 0;
+    let overflowY = 0;
+
+    if (imageAspect > containerAspect) {
+      // Image is wider than container - horizontal overflow
+      // At scale=1, overflow is (imageAspect/containerAspect - 1) * 50%
+      const baseOverflow = (imageAspect / containerAspect - 1) * 50;
+      overflowX = baseOverflow * scale;
+    } else {
+      // Image is taller than container - vertical overflow
+      const baseOverflow = (containerAspect / imageAspect - 1) * 50;
+      overflowY = baseOverflow * scale;
+    }
+
+    // Additional overflow from zooming beyond cover
+    if (scale > 1) {
+      const zoomOverflow = (scale - 1) * 50;
+      overflowX += zoomOverflow;
+      overflowY += zoomOverflow;
+    }
+
+    // Apply offset within overflow bounds
+    const translateX = offset.x * overflowX;
+    const translateY = offset.y * overflowY;
+
+    return {
+      transform: `translate(${translateX}%, ${translateY}%) scale(${scale})`,
+      transformOrigin: 'center center',
+    };
+  }, [imageUrl, imageDimensions, aspectRatio, offset, scale]);
+
+  // Handle pointer lock for infinite dragging
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handlePointerLockChange = () => {
+      const isLocked = document.pointerLockElement === container;
+      setIsDragging(isLocked);
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (document.pointerLockElement !== container) return;
+
+      const rect = container.getBoundingClientRect();
+      // Use movementX/Y for infinite movement
+      const deltaX = e.movementX / rect.width;
+      const deltaY = e.movementY / rect.height;
+
+      setOffset(prev => ({
+        x: Math.max(-1, Math.min(1, prev.x + deltaX * 2)),
+        y: Math.max(-1, Math.min(1, prev.y + deltaY * 2)),
+      }));
+    };
+
+    document.addEventListener('pointerlockchange', handlePointerLockChange);
+    document.addEventListener('mousemove', handleMouseMove);
+
+    return () => {
+      document.removeEventListener('pointerlockchange', handlePointerLockChange);
+      document.removeEventListener('mousemove', handleMouseMove);
+    };
+  }, []);
+
+  // Handle mouse down for drag - request pointer lock
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (disabled || !imageUrl) return;
+    if (e.button !== 0) return; // Only left click
+
+    // Don't capture if clicking on a button
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'BUTTON' || target.closest('button')) {
+      return;
+    }
+
+    e.preventDefault();
+    containerRef.current?.requestPointerLock();
+  }, [disabled, imageUrl]);
+
+  // Handle mouse up - release pointer lock
+  const handleMouseUp = useCallback(() => {
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+  }, []);
+
+  // Handle wheel for zoom - use native event to properly prevent scroll
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (disabled || !imageUrl) return;
+
+      // Prevent page scroll
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Smooth, slow zoom
+      const zoomFactor = 0.001;
+      const delta = -e.deltaY * zoomFactor;
+
+      setScale(prev => Math.max(1, Math.min(3, prev + delta)));
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleWheel);
+  }, [disabled, imageUrl]);
+
+  // Handle drag over for file drop
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  // Handle click to open file picker
+  const handleClick = useCallback(() => {
+    if (!imageUrl) {
+      onDropOrClick();
+    }
+  }, [imageUrl, onDropOrClick]);
+
+  return (
+    <div className="image-cropper-group">
+      <label>{label}</label>
+      <div
+        ref={containerRef}
+        className={`image-cropper ${imageUrl ? 'has-image' : ''} ${isDragging ? 'dragging' : ''}`}
+        style={{ aspectRatio: `${aspectRatio.width} / ${aspectRatio.height}` }}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onDragOver={handleDragOver}
+        onDrop={onDrop}
+        onClick={handleClick}
+      >
+        {imageUrl ? (
+          <>
+            <div className="image-cropper-viewport">
+              <img
+                src={imageUrl}
+                alt={label}
+                style={getImageStyle()}
+                draggable={false}
+              />
+            </div>
+            <div className="cropper-buttons">
+              <button
+                className="fit-image"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Reset to minimum scale that covers the box (no black)
+                  setScale(1);
+                  setOffset({ x: 0, y: 0 });
+                }}
+                title="Fit to cover"
+              >
+                ⊡
+              </button>
+              <button
+                className="clear-image"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClear();
+                }}
+                title="Remove image"
+              >
+                ×
+              </button>
+            </div>
+            {scale > 1 && (
+              <div className="zoom-indicator">{Math.round(scale * 100)}%</div>
+            )}
+            <div className="crop-hint">Drag to pan • Scroll to zoom</div>
+          </>
+        ) : (
+          <span className="drop-hint">Drop or click</span>
+        )}
+      </div>
+      <button
+        className="btn-use-current"
+        onClick={onUseCurrentFrame}
+        disabled={disabled}
+      >
+        Use Current Frame
+      </button>
+    </div>
+  );
+}

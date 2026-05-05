@@ -1,0 +1,1107 @@
+// AI Video Panel - AI video generation via Kie.ai or MasterSelects Cloud
+// Supports text-to-video and image-to-video generation with timeline integration
+
+import { Component, type ReactNode, useState, useCallback, useRef, useEffect, useMemo, lazy, Suspense } from 'react';
+import { Logger } from '../../services/logger';
+
+const FlashBoardWorkspace = lazy(() =>
+  import('./flashboard/FlashBoardWorkspace').then((m) => ({ default: m.FlashBoardWorkspace }))
+);
+
+const log = Logger.create('AIVideoPanel');
+import { useSettingsStore } from '../../stores/settingsStore';
+import { useAccountStore } from '../../stores/accountStore';
+import { useMediaStore } from '../../stores/mediaStore';
+import { useTimelineStore } from '../../stores/timeline';
+import { cloudAiService } from '../../services/cloudAiService';
+import {
+  type VideoTask,
+  type TextToVideoParams,
+  type ImageToVideoParams,
+  type AccountInfo,
+} from '../../services/piApiService';
+import {
+  kieAiService,
+  getKieAiProviders,
+  getKieAiProvider,
+} from '../../services/kieAiService';
+import { getFlashBoardPriceEstimate } from '../../services/flashboard/FlashBoardPricing';
+import { captureCurrentPreviewFrameDataUrl } from '../../services/previewFrameCapture';
+import { ImageCropper, type CropData } from './ImageCropper';
+import { exportCroppedImage } from './imageCropperUtils';
+import './AIVideoPanel.css';
+
+type GenerationType = 'text-to-video' | 'image-to-video';
+type PanelTab = 'generate' | 'history';
+
+interface FlashBoardErrorBoundaryProps {
+  children: ReactNode;
+  onRetry: () => void;
+  onUseClassic: () => void;
+}
+
+interface FlashBoardErrorBoundaryState {
+  error: Error | null;
+}
+
+class FlashBoardErrorBoundary extends Component<FlashBoardErrorBoundaryProps, FlashBoardErrorBoundaryState> {
+  state: FlashBoardErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): FlashBoardErrorBoundaryState {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    log.error('FlashBoard workspace failed to load', error);
+  }
+
+  render() {
+    if (this.state.error) {
+      const isDynamicImportError = this.state.error.message.includes('Failed to fetch dynamically imported module');
+      const message = isDynamicImportError
+        ? 'Das ist meist ein Vite-/Browser-Cachefehler nach HMR. Board neu laden oder auf Classic wechseln.'
+        : this.state.error.message;
+
+      return (
+        <div className="ai-video-error ai-video-error-panel">
+          <span className="error-icon">!</span>
+          <div className="ai-video-error-copy">
+            <strong>FlashBoard konnte nicht geladen werden.</strong>
+            <span>{message}</span>
+          </div>
+          <div className="ai-video-error-actions">
+            <button className="btn btn-sm" onClick={this.props.onRetry}>
+              Retry Board
+            </button>
+            <button className="btn btn-sm" onClick={this.props.onUseClassic}>
+              Use Classic
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+interface GenerationJob {
+  id: string;
+  type: GenerationType;
+  provider: string;
+  version: string;
+  prompt: string;
+  status: VideoTask['status'];
+  progress?: number;
+  videoUrl?: string;
+  thumbnailUrl?: string;
+  error?: string;
+  createdAt: Date;
+  completedAt?: Date;
+  duration?: number;
+  addedToTimeline?: boolean;
+}
+
+// Store history in localStorage and read the legacy PiAPI key for old installs.
+const HISTORY_KEY = 'ai-video-generation-history';
+const LEGACY_HISTORY_KEY = 'piapi-generation-history';
+
+function loadHistory(): GenerationJob[] {
+  try {
+    const stored = localStorage.getItem(HISTORY_KEY) ?? localStorage.getItem(LEGACY_HISTORY_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return parsed.map((job: GenerationJob) => ({
+        ...job,
+        createdAt: new Date(job.createdAt),
+        completedAt: job.completedAt ? new Date(job.completedAt) : undefined,
+      }));
+    }
+  } catch (e) {
+    log.warn('Failed to load generation history', e);
+  }
+  return [];
+}
+
+function saveHistory(history: GenerationJob[]) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, 50))); // Keep last 50
+  } catch (e) {
+    log.warn('Failed to save generation history', e);
+  }
+}
+
+// Get or create AI Video folder in media panel
+function getOrCreateAIVideoFolder(): string {
+  const { folders, createFolder } = useMediaStore.getState();
+  const existing = folders.find(f => f.name === 'AI Video');
+  if (existing) return existing.id;
+  const newFolder = createFolder('AI Video');
+  return newFolder.id;
+}
+
+// Download video from URL and create File object
+async function downloadVideoAsFile(url: string, filename: string): Promise<File | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Failed to fetch video');
+    const blob = await response.blob();
+    return new File([blob], filename, { type: blob.type || 'video/mp4' });
+  } catch (e) {
+    log.error('Failed to download video', e);
+    return null;
+  }
+}
+
+// Get aspect ratio dimensions from string
+function getAspectRatioDimensions(aspectRatio: string): { width: number; height: number } {
+  const [w, h] = aspectRatio.split(':').map(Number);
+  return { width: w || 16, height: h || 9 };
+}
+
+// Format elapsed time as mm:ss
+function formatElapsed(startDate: Date): string {
+  const elapsed = Math.floor((Date.now() - new Date(startDate).getTime()) / 1000);
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Live timer component that updates every second
+function JobTimer({ startDate }: { startDate: Date }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
+  return <span className="job-timer">{formatElapsed(startDate)}</span>;
+}
+
+export function AIVideoPanel() {
+  const { apiKeys, openSettings } = useSettingsStore();
+  const accountSession = useAccountStore((s) => s.session);
+  const loadAccountState = useAccountStore((s) => s.loadAccountState);
+  const openAuthDialog = useAccountStore((s) => s.openAuthDialog);
+  const { importFile } = useMediaStore();
+  const { tracks, addClip, addTrack } = useTimelineStore();
+  const hasHostedCloudAccess = Boolean(accountSession?.authenticated);
+
+  const [workspaceMode, setWorkspaceMode] = useState<'classic' | 'board'>('board');
+  const [boardRetryKey, setBoardRetryKey] = useState(0);
+
+  // Panel tab state
+  const [activeTab, setActiveTab] = useState<PanelTab>('generate');
+
+  const providers = getKieAiProviders();
+
+  // Provider and model selection
+  const [selectedProvider, setSelectedProvider] = useState<string>(providers[0]?.id || 'kling-3.0');
+  const [selectedVersion, setSelectedVersion] = useState<string>(providers[0]?.versions[0] || '3.0');
+
+  // Get current provider config
+  const currentProvider = getKieAiProvider(selectedProvider) || providers[0];
+  const boardService = !apiKeys.kieai && hasHostedCloudAccess ? 'cloud' : 'kieai';
+  const boardProviderId = boardService === 'cloud' ? 'cloud-kling' : selectedProvider;
+  const boardVersion = boardService === 'cloud' ? 'latest' : selectedVersion;
+
+  // Generation type (default to image-to-video)
+  const [generationType, setGenerationType] = useState<GenerationType>('image-to-video');
+
+  // Common parameters
+  const [prompt, setPrompt] = useState('');
+  const [duration, setDuration] = useState<number>(5);
+  const [aspectRatio, setAspectRatio] = useState<string>('16:9');
+  const [mode, setMode] = useState<string>('std');
+  const [generateAudio, setGenerateAudio] = useState(false);
+
+  // Image-to-video specific
+  const [startImagePreview, setStartImagePreview] = useState<string | null>(null);
+  const [startCropData, setStartCropData] = useState<CropData>({ offsetX: 0, offsetY: 0, scale: 1 });
+  const [endImagePreview, setEndImagePreview] = useState<string | null>(null);
+  const [endCropData, setEndCropData] = useState<CropData>({ offsetX: 0, offsetY: 0, scale: 1 });
+
+  // Get current aspect ratio dimensions
+  const aspectDimensions = useMemo(() => getAspectRatioDimensions(aspectRatio), [aspectRatio]);
+
+  // Timeline integration options
+  const [addToTimeline, setAddToTimeline] = useState(true);
+
+  // Generation state
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [jobs, setJobs] = useState<GenerationJob[]>([]);
+  const [history, setHistory] = useState<GenerationJob[]>(() => loadHistory());
+  const [error, setError] = useState<string | null>(null);
+
+  // History playback
+  const [playingVideoId, setPlayingVideoId] = useState<string | null>(null);
+  const videoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
+
+  // Account balance
+  const [accountInfo, setAccountInfo] = useState<AccountInfo | null>(null);
+  const [isLoadingBalance, setIsLoadingBalance] = useState(false);
+
+  // Check if API credentials are available for the selected service
+  const hasGenerationAccess = Boolean(apiKeys.kieai || hasHostedCloudAccess);
+
+  // Fetch account balance
+  const fetchAccountBalance = useCallback(async () => {
+    setIsLoadingBalance(true);
+    try {
+      let service: typeof cloudAiService | typeof kieAiService | null = null;
+
+      if (apiKeys.kieai) {
+        service = kieAiService;
+      } else if (hasHostedCloudAccess) {
+        service = cloudAiService;
+      }
+
+      if (!service) {
+        setAccountInfo(null);
+        return;
+      }
+
+      const info = await service.getAccountInfo();
+      setAccountInfo(info);
+    } catch (err) {
+      log.error('Failed to fetch account balance', err);
+    } finally {
+      setIsLoadingBalance(false);
+    }
+  }, [apiKeys.kieai, hasHostedCloudAccess]);
+
+  // Set API key when it changes and fetch balance
+  useEffect(() => {
+    if (apiKeys.kieai) {
+      kieAiService.setApiKey(apiKeys.kieai);
+    }
+    fetchAccountBalance();
+  }, [apiKeys.kieai, fetchAccountBalance]);
+
+  // Update version when provider changes
+  useEffect(() => {
+    const provider = getKieAiProvider(selectedProvider);
+    if (provider && !provider.versions.includes(selectedVersion)) {
+      setSelectedVersion(provider.versions[0]);
+    }
+    // Reset mode if not supported
+    if (provider && !provider.supportedModes.includes(mode)) {
+      setMode(provider.supportedModes[0]);
+    }
+    // Reset duration if not supported
+    if (provider && !provider.supportedDurations.includes(duration)) {
+      setDuration(provider.supportedDurations[0]);
+    }
+  }, [selectedProvider, selectedVersion, mode, duration]);
+
+  // Save history when it changes
+  useEffect(() => {
+    saveHistory(history);
+  }, [history]);
+
+  const handleRetryBoard = useCallback(() => {
+    setBoardRetryKey((current) => current + 1);
+  }, []);
+
+  const handleUseClassicMode = useCallback(() => {
+    setWorkspaceMode('classic');
+    setBoardRetryKey((current) => current + 1);
+  }, []);
+
+  // Handle file drop for start image
+  const handleStartDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = () => setStartImagePreview(reader.result as string);
+      reader.readAsDataURL(file);
+    }
+  }, []);
+
+  // Handle file drop for end image
+  const handleEndDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = () => setEndImagePreview(reader.result as string);
+      reader.readAsDataURL(file);
+    }
+  }, []);
+
+  // Open file picker for start image
+  const openStartFilePicker = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file && file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = () => setStartImagePreview(reader.result as string);
+        reader.readAsDataURL(file);
+      }
+    };
+    input.click();
+  }, []);
+
+  // Open file picker for end image
+  const openEndFilePicker = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file && file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = () => setEndImagePreview(reader.result as string);
+        reader.readAsDataURL(file);
+      }
+    };
+    input.click();
+  }, []);
+
+  // Clear start image
+  const clearStartImage = useCallback(() => {
+    setStartImagePreview(null);
+    setStartCropData({ offsetX: 0, offsetY: 0, scale: 1 });
+  }, []);
+
+  // Clear end image
+  const clearEndImage = useCallback(() => {
+    setEndImagePreview(null);
+    setEndCropData({ offsetX: 0, offsetY: 0, scale: 1 });
+  }, []);
+
+  // Use current frame from timeline for start
+  const useCurrentFrameStart = useCallback(async () => {
+    const dataUrl = await captureCurrentPreviewFrameDataUrl();
+    if (dataUrl) {
+      setStartImagePreview(dataUrl);
+      setStartCropData({ offsetX: 0, offsetY: 0, scale: 1 });
+    }
+  }, []);
+
+  // Use current frame from timeline for end
+  const useCurrentFrameEnd = useCallback(async () => {
+    const dataUrl = await captureCurrentPreviewFrameDataUrl();
+    if (dataUrl) {
+      setEndImagePreview(dataUrl);
+      setEndCropData({ offsetX: 0, offsetY: 0, scale: 1 });
+    }
+  }, []);
+
+  // Export cropped image for API upload
+  const getCroppedImageUrl = useCallback(async (
+    imagePreview: string,
+    cropData: CropData
+  ): Promise<string> => (
+    exportCroppedImage(imagePreview, cropData, aspectDimensions, 1280)
+  ), [aspectDimensions]);
+
+  // Import video to media panel and optionally add to timeline
+  const importVideoToProject = useCallback(async (job: GenerationJob) => {
+    if (!job.videoUrl) return;
+
+    try {
+      // Download video file
+      const filename = `${job.provider}_${job.id.slice(0, 8)}_${Date.now()}.mp4`;
+      const file = await downloadVideoAsFile(job.videoUrl, filename);
+      if (!file) {
+        log.error('Failed to download video');
+        return;
+      }
+
+      // Get or create AI Video folder
+      const folderId = getOrCreateAIVideoFolder();
+
+      // Import to media panel
+      const mediaFile = await importFile(file);
+
+      // Move to AI Video folder
+      useMediaStore.getState().moveToFolder([mediaFile.id], folderId);
+
+      log.info('Imported video to media panel', { name: mediaFile.name });
+
+      // Add to timeline if option is enabled
+      if (addToTimeline) {
+        // Find an empty video track or create one
+        const videoTracks = tracks.filter(t => t.type === 'video');
+        let targetTrackId: string | null = null;
+
+        // Try to find an empty video track
+        for (const track of videoTracks) {
+          const { clips } = useTimelineStore.getState();
+          const trackClips = clips.filter(c => c.trackId === track.id);
+          if (trackClips.length === 0) {
+            targetTrackId = track.id;
+            break;
+          }
+        }
+
+        // If no empty track, create a new one
+        if (!targetTrackId) {
+          targetTrackId = addTrack('video');
+        }
+
+        // Add clip to timeline at playhead position
+        const { playheadPosition } = useTimelineStore.getState();
+        await addClip(targetTrackId, file, playheadPosition, job.duration, mediaFile.id);
+
+        log.info('Added clip to timeline');
+
+        // Update job to mark as added
+        setJobs(prev => prev.map(j =>
+          j.id === job.id ? { ...j, addedToTimeline: true } : j
+        ));
+        setHistory(prev => prev.map(h =>
+          h.id === job.id ? { ...h, addedToTimeline: true } : h
+        ));
+      }
+    } catch (err) {
+      log.error('Failed to import video', err);
+    }
+  }, [importFile, tracks, addClip, addTrack, addToTimeline]);
+
+  // Get the active service instance
+  const getActiveService = useCallback(() => {
+    if (!apiKeys.kieai && hasHostedCloudAccess) {
+      return cloudAiService;
+    }
+
+    return kieAiService;
+  }, [apiKeys.kieai, hasHostedCloudAccess]);
+
+  // Generate video
+  const generateVideo = useCallback(async () => {
+    if (!prompt.trim() || isGenerating) return;
+
+    setIsGenerating(true);
+    setError(null);
+
+    const service = getActiveService();
+
+    try {
+      let taskId: string;
+
+      if (generationType === 'text-to-video') {
+        const params: TextToVideoParams = {
+          provider: selectedProvider,
+          version: selectedVersion,
+          prompt: prompt.trim(),
+          duration,
+          aspectRatio,
+          mode,
+          sound: generateAudio,
+        };
+
+        taskId = await service.createTextToVideo(params);
+      } else {
+        // Image-to-video - use cropped images
+        const params: ImageToVideoParams = {
+          provider: selectedProvider,
+          version: selectedVersion,
+          prompt: prompt.trim(),
+          duration,
+          aspectRatio,
+          mode,
+          sound: generateAudio,
+          startImageUrl: startImagePreview ? await getCroppedImageUrl(startImagePreview, startCropData) : undefined,
+          endImageUrl: endImagePreview ? await getCroppedImageUrl(endImagePreview, endCropData) : undefined,
+        };
+
+        taskId = await service.createImageToVideo(params);
+      }
+
+      if (!apiKeys.kieai && hasHostedCloudAccess) {
+        void loadAccountState();
+        void fetchAccountBalance();
+      }
+
+      // Add job to list
+      const job: GenerationJob = {
+        id: taskId,
+        type: generationType,
+        provider: selectedProvider,
+        version: selectedVersion,
+        prompt: prompt.trim(),
+        status: 'pending',
+        createdAt: new Date(),
+        duration,
+      };
+      setJobs(prev => [job, ...prev]);
+
+      // Poll for completion
+      service.pollTaskUntilComplete(taskId, (task) => {
+        setJobs(prev => prev.map(j =>
+          j.id === taskId
+            ? {
+              ...j,
+              status: task.status,
+              progress: task.progress,
+              videoUrl: task.videoUrl,
+              error: task.error,
+              completedAt: task.status === 'completed' ? new Date() : undefined,
+            }
+            : j
+        ));
+      }).then(async (completedTask) => {
+        if (completedTask.status === 'completed' && completedTask.videoUrl) {
+          // Get the updated job
+          const updatedJob = {
+            ...job,
+            status: completedTask.status,
+            videoUrl: completedTask.videoUrl,
+            completedAt: new Date(),
+          };
+
+          // Add to history
+          setHistory(prev => [updatedJob, ...prev]);
+
+          // Import to project
+          await importVideoToProject(updatedJob);
+        }
+      }).catch(err => {
+        setJobs(prev => prev.map(j =>
+          j.id === taskId
+            ? { ...j, status: 'failed', error: err.message }
+            : j
+        ));
+      });
+
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start generation');
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [
+    prompt, selectedProvider, selectedVersion, duration, aspectRatio, mode, generateAudio,
+    generationType, startImagePreview, startCropData, endImagePreview, endCropData, isGenerating,
+    importVideoToProject, getCroppedImageUrl, getActiveService, apiKeys.kieai, hasHostedCloudAccess, loadAccountState,
+    fetchAccountBalance,
+  ]);
+
+  // Remove job from list
+  const removeJob = useCallback((jobId: string) => {
+    setJobs(prev => prev.filter(j => j.id !== jobId));
+  }, []);
+
+  // Remove from history
+  const removeFromHistory = useCallback((jobId: string) => {
+    setHistory(prev => prev.filter(h => h.id !== jobId));
+  }, []);
+
+  // Play/pause video in history
+  const toggleVideoPlayback = useCallback((jobId: string) => {
+    const video = videoRefs.current.get(jobId);
+    if (!video) return;
+
+    if (playingVideoId === jobId) {
+      video.pause();
+      setPlayingVideoId(null);
+    } else {
+      // Pause any currently playing
+      if (playingVideoId) {
+        const currentVideo = videoRefs.current.get(playingVideoId);
+        currentVideo?.pause();
+      }
+      video.play();
+      setPlayingVideoId(jobId);
+    }
+  }, [playingVideoId]);
+
+  // Handle drag start for history item
+  const handleHistoryDragStart = useCallback((e: React.DragEvent, job: GenerationJob) => {
+    if (!job.videoUrl) return;
+    e.dataTransfer.setData('text/plain', job.videoUrl);
+    e.dataTransfer.setData('application/x-ai-video', JSON.stringify({
+      id: job.id,
+      prompt: job.prompt,
+      videoUrl: job.videoUrl,
+    }));
+    e.dataTransfer.effectAllowed = 'copy';
+  }, []);
+
+  // Add history item to timeline
+  const addHistoryToTimeline = useCallback(async (job: GenerationJob) => {
+    if (!job.videoUrl) return;
+    await importVideoToProject({ ...job });
+  }, [importVideoToProject]);
+
+  const currentPriceEstimate = getFlashBoardPriceEstimate({
+    service: boardService,
+    providerId: boardProviderId,
+    outputType: 'video',
+    mode,
+    duration,
+    generateAudio,
+  });
+
+  return (
+    <div className={`ai-video-panel ${!hasGenerationAccess ? 'no-api-key' : ''}`}>
+      {/* Access Overlay */}
+      {!hasGenerationAccess && (
+        <div className="ai-video-overlay">
+          <div className="ai-video-overlay-content">
+            <span className="no-key-icon">🎬</span>
+            <p>Sign in to use MasterSelects Cloud credits</p>
+            <span className="no-key-hint">
+              If you prefer, you can still use your own Kie.ai key in Settings.
+            </span>
+            <div className="no-key-actions">
+              <button className="btn-settings" onClick={openAuthDialog}>
+                Sign in
+              </button>
+              <button className="btn-settings" onClick={openSettings}>
+                API Keys
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Sub-tabs with service + provider dropdowns */}
+      <div className="panel-tabs-row">
+        <div className="panel-tabs">
+          <button
+            className={`panel-tab ${activeTab === 'generate' ? 'active' : ''}`}
+            onClick={() => setActiveTab('generate')}
+          >
+            AI Video
+          </button>
+          <button
+            className={`panel-tab ${activeTab === 'history' ? 'active' : ''}`}
+            onClick={() => setActiveTab('history')}
+          >
+            History ({history.length})
+          </button>
+        </div>
+        <div className="service-provider-selects">
+          <select
+            className="provider-select"
+            value={selectedProvider}
+            onChange={(e) => setSelectedProvider(e.target.value)}
+            disabled={isGenerating}
+          >
+            {providers.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="ai-video-mode-toggle">
+          <button
+            className={`ai-video-mode-btn ${workspaceMode === 'classic' ? 'active' : ''}`}
+            onClick={() => setWorkspaceMode('classic')}
+          >
+            Classic
+          </button>
+          <button
+            className={`ai-video-mode-btn ${workspaceMode === 'board' ? 'active' : ''}`}
+            onClick={() => setWorkspaceMode('board')}
+          >
+            Board
+          </button>
+        </div>
+      </div>
+
+      {workspaceMode === 'board' ? (
+        <FlashBoardErrorBoundary
+          key={boardRetryKey}
+          onRetry={handleRetryBoard}
+          onUseClassic={handleUseClassicMode}
+        >
+          <Suspense
+            fallback={
+              <div
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                Loading FlashBoard...
+              </div>
+            }
+          >
+            <FlashBoardWorkspace
+              initialProviderId={boardProviderId}
+              initialService={boardService}
+              initialVersion={boardVersion}
+              serviceScope={boardService}
+            />
+          </Suspense>
+        </FlashBoardErrorBoundary>
+      ) : (
+      <>
+      {/* Jobs Queue - shown at top when not empty */}
+      {jobs.length > 0 && (
+        <div className="jobs-section jobs-section-top">
+          <div className="jobs-header">
+            <h3>Queue ({jobs.length})</h3>
+          </div>
+          <div className="jobs-list-scroll">
+            {jobs.map(job => (
+              <div
+                key={job.id}
+                className={`job-item-compact ${job.status}`}
+                draggable={!!job.videoUrl}
+                onDragStart={(e) => {
+                  if (!job.videoUrl) return;
+                  e.dataTransfer.setData('text/plain', job.videoUrl);
+                  e.dataTransfer.setData('application/x-ai-video', JSON.stringify({
+                    id: job.id,
+                    prompt: job.prompt,
+                    videoUrl: job.videoUrl,
+                  }));
+                  e.dataTransfer.effectAllowed = 'copy';
+                }}
+              >
+                {/* Mini thumbnail for completed videos */}
+                {job.videoUrl && (
+                  <video
+                    className="job-thumb"
+                    src={job.videoUrl}
+                    preload="metadata"
+                    muted
+                  />
+                )}
+                {/* Spinner for pending/processing */}
+                {!job.videoUrl && job.status !== 'failed' && (
+                  <div className="job-thumb job-thumb-loading">
+                    <span className="job-spinner" />
+                  </div>
+                )}
+                <div className="job-compact-info">
+                  <div className="job-compact-top">
+                    <span className="job-type">{job.provider.toUpperCase()}</span>
+                    <span className={`job-status ${job.status}`}>
+                      {job.status === 'pending' && 'Queued'}
+                      {job.status === 'processing' && 'Processing...'}
+                      {job.status === 'completed' && 'Done'}
+                      {job.status === 'failed' && 'Failed'}
+                    </span>
+                    {(job.status === 'pending' || job.status === 'processing') && (
+                      <JobTimer startDate={job.createdAt} />
+                    )}
+                  </div>
+                  <div className="job-prompt-compact">{job.prompt}</div>
+                  {job.error && <div className="job-error-compact">{job.error}</div>}
+                </div>
+                <button
+                  className="btn-remove"
+                  onClick={() => removeJob(job.id)}
+                  title="Remove"
+                >
+                  x
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Balance bar + Generate button - always visible at top */}
+      {hasGenerationAccess && (
+        <div className="balance-bar">
+          <div className="credit-balance">
+            {accountInfo ? (
+              <span className="balance-amount">
+                {`${accountInfo.credits} credits`}
+              </span>
+            ) : (
+              <span className="balance-loading">
+                {isLoadingBalance ? 'Loading...' : '--'}
+              </span>
+            )}
+            <button
+              className="btn-refresh-balance"
+              onClick={fetchAccountBalance}
+              disabled={isLoadingBalance}
+              title="Refresh balance"
+            >
+              {isLoadingBalance ? '...' : '↻'}
+            </button>
+          </div>
+          <button
+            className="btn-generate-top"
+            onClick={generateVideo}
+            disabled={isGenerating || !prompt.trim()}
+            title={currentPriceEstimate?.fullLabel}
+          >
+            {isGenerating ? 'Starting...' : `Generate (${currentPriceEstimate?.compactLabel ?? '--'})`}
+          </button>
+        </div>
+      )}
+
+      {/* Content */}
+      {activeTab === 'generate' ? (
+        <div className="ai-video-content">
+          {/* Generation Type Tabs */}
+          <div className="generation-tabs">
+            <button
+              className={`tab ${generationType === 'text-to-video' ? 'active' : ''}`}
+              onClick={() => setGenerationType('text-to-video')}
+              disabled={isGenerating || !currentProvider?.supportsTextToVideo}
+            >
+              Text to Video
+            </button>
+            <button
+              className={`tab ${generationType === 'image-to-video' ? 'active' : ''}`}
+              onClick={() => setGenerationType('image-to-video')}
+              disabled={isGenerating || !currentProvider?.supportsImageToVideo}
+            >
+              Image to Video
+            </button>
+          </div>
+
+          {/* Image-to-Video: Aspect Ratio + Image Croppers */}
+          {generationType === 'image-to-video' && (
+            <>
+              {/* Aspect Ratio Selection */}
+              <div className="aspect-ratio-row">
+                <label>Aspect Ratio</label>
+                <div className="aspect-ratio-options">
+                  {(currentProvider?.supportedAspectRatios || ['16:9', '9:16', '1:1']).map(ar => (
+                    <button
+                      key={ar}
+                      className={`aspect-btn ${aspectRatio === ar ? 'active' : ''}`}
+                      onClick={() => setAspectRatio(ar)}
+                      disabled={isGenerating}
+                    >
+                      {ar}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Image Croppers */}
+              <div className="image-inputs">
+                <ImageCropper
+                  label="Start Frame"
+                  imageUrl={startImagePreview}
+                  aspectRatio={aspectDimensions}
+                  onClear={clearStartImage}
+                  onCropChange={setStartCropData}
+                  disabled={isGenerating}
+                  onDropOrClick={openStartFilePicker}
+                  onDrop={handleStartDrop}
+                  onUseCurrentFrame={useCurrentFrameStart}
+                />
+                {(selectedProvider === 'kling' || selectedProvider === 'kling-3.0') && (
+                  <ImageCropper
+                    label="End Frame (optional)"
+                    imageUrl={endImagePreview}
+                    aspectRatio={aspectDimensions}
+                    onClear={clearEndImage}
+                    onCropChange={setEndCropData}
+                    disabled={isGenerating}
+                    onDropOrClick={openEndFilePicker}
+                    onDrop={handleEndDrop}
+                    onUseCurrentFrame={useCurrentFrameEnd}
+                  />
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Prompt Input */}
+          <div className="input-group">
+            <label>Prompt</label>
+            <textarea
+              className="prompt-input"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Describe the video you want to generate..."
+              disabled={isGenerating}
+              rows={3}
+            />
+          </div>
+
+          {/* Parameters Grid */}
+          <div className="params-grid">
+            {/* Version */}
+            <div className="param-group">
+              <label>Version</label>
+              <select
+                value={selectedVersion}
+                onChange={(e) => setSelectedVersion(e.target.value)}
+                disabled={isGenerating}
+              >
+                {currentProvider?.versions.map(v => (
+                  <option key={v} value={v}>v{v}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Duration */}
+            <div className="param-group">
+              <label>Duration</label>
+              <select
+                value={duration}
+                onChange={(e) => setDuration(Number(e.target.value))}
+                disabled={isGenerating}
+              >
+                {currentProvider?.supportedDurations.map(d => (
+                  <option key={d} value={d}>{d} seconds</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Aspect Ratio (only for text-to-video) */}
+            {generationType === 'text-to-video' && (
+              <div className="param-group">
+                <label>Aspect Ratio</label>
+                <select
+                  value={aspectRatio}
+                  onChange={(e) => setAspectRatio(e.target.value)}
+                  disabled={isGenerating}
+                >
+                  {currentProvider?.supportedAspectRatios.map(ar => (
+                    <option key={ar} value={ar}>{ar}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Mode */}
+            {currentProvider?.supportedModes.length > 1 && (
+              <div className="param-group">
+                <label>Quality</label>
+                <select
+                  value={mode}
+                  onChange={(e) => setMode(e.target.value)}
+                  disabled={isGenerating}
+                >
+                  {currentProvider.supportedModes.map(m => (
+                    <option key={m} value={m}>{m === 'std' ? 'Standard' : 'Professional'}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+          </div>
+
+          {/* Audio + Timeline Options */}
+          <div className="generation-options">
+            {(selectedProvider === 'kling' || selectedProvider === 'kling-3.0') && (
+              <label className="timeline-option">
+                <input
+                  type="checkbox"
+                  checked={generateAudio}
+                  onChange={(e) => setGenerateAudio(e.target.checked)}
+                  disabled={isGenerating}
+                />
+                <span>Generate audio</span>
+              </label>
+            )}
+            <label className="timeline-option">
+              <input
+                type="checkbox"
+                checked={addToTimeline}
+                onChange={(e) => setAddToTimeline(e.target.checked)}
+                disabled={isGenerating}
+              />
+              <span>Add to timeline when complete</span>
+            </label>
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="ai-video-error">
+              <span className="error-icon">!</span>
+              {error}
+            </div>
+          )}
+
+        </div>
+      ) : (
+        /* History Tab */
+        <div className="ai-video-history">
+          {history.length === 0 ? (
+            <div className="history-empty">
+              <p>No generated videos yet</p>
+              <span>Videos you generate will appear here</span>
+            </div>
+          ) : (
+            <div className="history-list">
+              {history.map(job => (
+                <div
+                  key={job.id}
+                  className="history-item"
+                  draggable={!!job.videoUrl}
+                  onDragStart={(e) => handleHistoryDragStart(e, job)}
+                >
+                  <div className="history-preview">
+                    {job.videoUrl ? (
+                      <video
+                        ref={(el) => {
+                          if (el) videoRefs.current.set(job.id, el);
+                          else videoRefs.current.delete(job.id);
+                        }}
+                        src={job.videoUrl}
+                        preload="metadata"
+                        muted
+                        loop
+                        onClick={() => toggleVideoPlayback(job.id)}
+                        onEnded={() => setPlayingVideoId(null)}
+                      />
+                    ) : (
+                      <div className="history-preview-placeholder">
+                        {job.status === 'failed' ? 'Failed' : 'Processing...'}
+                      </div>
+                    )}
+                    {job.videoUrl && (
+                      <button
+                        className="play-overlay"
+                        onClick={() => toggleVideoPlayback(job.id)}
+                      >
+                        {playingVideoId === job.id ? '⏸' : '▶'}
+                      </button>
+                    )}
+                  </div>
+                  <div className="history-info">
+                    <div className="history-prompt">{job.prompt}</div>
+                    <div className="history-meta">
+                      <span className="history-type">
+                        {job.provider?.toUpperCase() || 'KLING'}
+                      </span>
+                      <span className="history-date">
+                        {job.createdAt.toLocaleDateString()}
+                      </span>
+                      {job.addedToTimeline && (
+                        <span className="history-added">In Timeline</span>
+                      )}
+                    </div>
+                    <div className="history-actions">
+                      {job.videoUrl && !job.addedToTimeline && (
+                        <button
+                          className="btn-add-timeline"
+                          onClick={() => addHistoryToTimeline(job)}
+                          title="Add to timeline"
+                        >
+                          + Timeline
+                        </button>
+                      )}
+                      <button
+                        className="btn-remove-history"
+                        onClick={() => removeFromHistory(job.id)}
+                        title="Remove from history"
+                      >
+                        x
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      </>
+      )}
+    </div>
+  );
+}

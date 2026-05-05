@@ -1,0 +1,1388 @@
+/* ─── Legacy classes (used by AccountDialog, PricingDialog) ─── */
+
+.auth-billing-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(4, 8, 16, 0.7);
+  backdrop-filter: blur(14px);
+}
+
+.auth-billing-dialog {
+  width: min(520px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top left, rgba(79, 70, 229, 0.2), transparent 38%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(11, 18, 32, 0.98));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  color: var(--text-primary, #f2f5ff);
+  overflow: hidden;
+}
+
+.auth-billing-dialog-wide {
+  width: min(880px, 100%);
+}
+
+.auth-billing-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+  padding: 20px 20px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.auth-billing-kicker {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: rgba(148, 163, 184, 0.9);
+  margin-bottom: 6px;
+}
+
+.auth-billing-header h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.auth-billing-close {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary, #f2f5ff);
+  cursor: pointer;
+}
+
+.auth-billing-body,
+.account-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+
+.auth-billing-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: rgba(226, 232, 240, 0.88);
+  font-size: 13px;
+}
+
+.auth-billing-field input {
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.9);
+  padding: 12px 14px;
+  color: inherit;
+  outline: none;
+}
+
+.auth-billing-provider-row {
+  display: flex;
+  gap: 10px;
+}
+
+.auth-billing-provider,
+.auth-billing-primary,
+.auth-billing-secondary,
+.auth-billing-ghost {
+  border-radius: 12px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.auth-billing-provider:hover,
+.auth-billing-primary:hover,
+.auth-billing-secondary:hover,
+.auth-billing-ghost:hover {
+  transform: translateY(-1px);
+}
+
+.auth-billing-provider {
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  padding: 10px 14px;
+}
+
+.auth-billing-provider.active {
+  border-color: rgba(99, 102, 241, 0.7);
+  background: rgba(99, 102, 241, 0.18);
+}
+
+.auth-billing-primary {
+  background: linear-gradient(135deg, #7c3aed, #2563eb);
+  color: white;
+  padding: 12px 16px;
+  font-weight: 600;
+}
+
+.auth-billing-secondary,
+.auth-billing-ghost {
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  padding: 12px 16px;
+}
+
+.auth-billing-ghost {
+  opacity: 0.86;
+}
+
+.auth-billing-primary:disabled,
+.auth-billing-secondary:disabled,
+.auth-billing-ghost:disabled,
+.auth-billing-provider:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.auth-billing-note,
+.account-empty {
+  margin: 0;
+  color: rgba(148, 163, 184, 0.92);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.auth-billing-error {
+  margin-top: 4px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(220, 38, 38, 0.15);
+  color: #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
+.auth-billing-success {
+  margin-top: 4px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #bbf7d0;
+  border: 1px solid rgba(52, 211, 153, 0.25);
+}
+
+/* ─── Auth Dialog (Changelog-style floating) ─── */
+
+.welcome-overlay.auth-dialog {
+  width: 640px;
+  max-width: 90vw;
+  max-height: 85vh;
+  padding: 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  color: var(--text-primary, #f2f5ff);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.auth-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 24px;
+  flex-shrink: 0;
+  border-radius: 20px 20px 0 0;
+  background: rgba(22, 22, 22, 0.97);
+}
+
+.auth-dialog-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.auth-dialog-header-right {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.auth-dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 16px 24px 24px;
+  background: rgba(22, 22, 22, 0.95);
+  border-radius: 0 0 20px 20px;
+}
+
+.auth-dialog-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auth-dialog-subtitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary, #f2f5ff);
+}
+
+.auth-dialog-description {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.50);
+}
+
+.auth-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auth-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auth-dialog-label {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+  letter-spacing: 0.12em;
+}
+
+.auth-dialog-input {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 10px 14px;
+  color: var(--text-primary, #f2f5ff);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.auth-dialog-input:focus {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.auth-dialog-input::placeholder {
+  color: rgba(255, 255, 255, 0.22);
+}
+
+.auth-dialog-provider-row {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-dialog-provider {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.auth-dialog-provider:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.auth-dialog-provider.active {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary, #f2f5ff);
+}
+
+.auth-dialog-submit {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  padding: 0 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.auth-dialog-submit:hover {
+  background: rgba(255, 255, 255, 0.13);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.auth-dialog-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.auth-dialog-notice {
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.auth-dialog-notice-error {
+  background: rgba(220, 38, 38, 0.1);
+  color: #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.2);
+}
+
+.auth-dialog-notice-success {
+  background: rgba(16, 185, 129, 0.1);
+  color: #bbf7d0;
+  border: 1px solid rgba(52, 211, 153, 0.18);
+}
+
+/* ─── Dev Quick Login (localhost only) ─── */
+
+.auth-dialog-dev-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.auth-dialog-dev-plans {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.auth-dialog-dev-plan-btn {
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(52, 211, 153, 0.2);
+  background: rgba(16, 185, 129, 0.08);
+  color: rgba(167, 243, 208, 0.9);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.auth-dialog-dev-plan-btn:hover {
+  background: rgba(16, 185, 129, 0.16);
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+.auth-dialog-dev-plan-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.auth-dialog-dev-hint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.25);
+  font-style: italic;
+}
+
+/* Wide variant for Account + Pricing */
+.welcome-overlay.auth-dialog-wide {
+  width: 680px;
+}
+
+.welcome-overlay.auth-dialog-pricing {
+  width: min(1180px, 94vw);
+}
+
+/* ─── Secondary / Ghost action buttons ─── */
+
+.auth-dialog-action-secondary,
+.auth-dialog-action-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  padding: 0 20px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.auth-dialog-action-secondary {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.auth-dialog-action-secondary:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.auth-dialog-action-ghost {
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.auth-dialog-action-ghost:hover {
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.auth-dialog-action-secondary:disabled,
+.auth-dialog-action-ghost:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/* ─── Account Dialog (Changelog-style) ─── */
+
+.account-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.account-metric-card {
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  text-align: center;
+}
+
+.account-metric-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.35);
+  margin-bottom: 8px;
+}
+
+.account-metric-value {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary, #f2f5ff);
+}
+
+.account-usage-card {
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.account-usage-card .account-metric-label {
+  text-align: left;
+  margin-bottom: 4px;
+}
+
+.account-usage-entry {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.account-usage-detail {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.account-usage-empty {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 13px;
+}
+
+.account-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.account-actions-row .auth-dialog-submit {
+  margin-top: 0;
+}
+
+.account-signout-row {
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* ─── Pricing Dialog (Changelog-style) ─── */
+
+.pricing-plans-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.pricing-plan-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 420px;
+  padding: 20px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.08), transparent 44%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.02));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.pricing-plan-featured {
+  border-color: rgba(230, 214, 153, 0.38);
+  background:
+    radial-gradient(circle at top, rgba(230, 214, 153, 0.16), transparent 48%),
+    linear-gradient(180deg, rgba(255, 248, 214, 0.08), rgba(255, 255, 255, 0.03));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 16px 32px rgba(0, 0, 0, 0.18);
+}
+
+.pricing-plan-current {
+  border-color: rgba(216, 190, 118, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 244, 204, 0.08),
+    0 12px 24px rgba(0, 0, 0, 0.18);
+}
+
+.pricing-plan-current::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 22px;
+  border: 1px solid rgba(232, 210, 145, 0.52);
+  pointer-events: none;
+}
+
+.pricing-plan-card-free {
+  background:
+    radial-gradient(circle at top, rgba(150, 150, 150, 0.08), transparent 44%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015));
+}
+
+.pricing-plan-card-starter {
+  background:
+    radial-gradient(circle at top, rgba(149, 176, 255, 0.16), transparent 46%),
+    linear-gradient(180deg, rgba(197, 215, 255, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+.pricing-plan-card-pro {
+  background:
+    radial-gradient(circle at top, rgba(232, 220, 164, 0.2), transparent 48%),
+    linear-gradient(180deg, rgba(255, 244, 204, 0.10), rgba(255, 255, 255, 0.03));
+}
+
+.pricing-plan-card-studio {
+  background:
+    radial-gradient(circle at top, rgba(178, 218, 193, 0.18), transparent 46%),
+    linear-gradient(180deg, rgba(212, 246, 223, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+.pricing-dialog-content {
+  gap: 28px;
+}
+
+.pricing-dialog-intro {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: end;
+}
+
+.pricing-dialog-current-plan {
+  min-width: 190px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.pricing-dialog-current-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.34);
+}
+
+.pricing-dialog-current-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.pricing-dialog-current-note {
+  display: block;
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 237, 187, 0.78);
+}
+
+.pricing-plan-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pricing-plan-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.pricing-plan-badge-featured {
+  border-color: rgba(230, 214, 153, 0.45);
+  background: rgba(230, 214, 153, 0.12);
+  color: rgba(255, 244, 204, 0.92);
+}
+
+.pricing-plan-badge-current {
+  border-color: rgba(232, 210, 145, 0.44);
+  background: rgba(232, 210, 145, 0.12);
+  color: rgba(255, 237, 187, 0.96);
+}
+
+.pricing-plan-top {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.pricing-plan-name {
+  margin: 0;
+  font-size: 29px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-primary, #f2f5ff);
+}
+
+.pricing-plan-description {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  min-height: calc(1.65em * 2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.54);
+}
+
+.pricing-plan-price-block {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pricing-plan-price {
+  font-size: 40px;
+  line-height: 0.95;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.pricing-plan-price-note {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.pricing-plan-credit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 15px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.pricing-plan-credit-value {
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.93);
+}
+
+.pricing-plan-credit-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.pricing-plan-feature-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.pricing-plan-feature {
+  position: relative;
+  padding-left: 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.pricing-plan-feature::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.pricing-plan-cta {
+  width: 100%;
+  min-height: 42px;
+  margin-top: auto;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.pricing-plan-cta:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.pricing-plan-cta:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.pricing-plan-cta-muted {
+  opacity: 0.5;
+}
+
+/* ─── Legal Dialog ─── */
+
+.legal-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.legal-lang-select {
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(15, 23, 42, 0.8);
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='rgba(148,163,184,0.6)'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 22px;
+}
+
+.legal-lang-select:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.legal-lang-select:focus {
+  border-color: rgba(99, 102, 241, 0.6);
+}
+
+.legal-lang-select option {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+.legal-tab {
+  padding: 10px 20px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.8);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.legal-tab:hover {
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.legal-tab.active {
+  color: rgba(255, 255, 255, 0.95);
+  border-bottom-color: rgba(99, 102, 241, 0.8);
+}
+
+.legal-content {
+  padding: 24px;
+  height: 60vh;
+  overflow-y: auto;
+  background: rgba(22, 22, 22, 0.95);
+  border-radius: 0 0 18px 18px;
+}
+
+.legal-text h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+  margin: 24px 0 8px;
+}
+
+.legal-text h3:first-child {
+  margin-top: 0;
+}
+
+.legal-text h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(226, 232, 240, 0.85);
+  margin: 16px 0 6px;
+}
+
+.legal-text p {
+  font-size: 13px;
+  line-height: 1.65;
+  color: rgba(148, 163, 184, 0.9);
+  margin: 0 0 12px;
+}
+
+.legal-text a {
+  color: rgba(129, 140, 248, 0.9);
+  text-decoration: none;
+}
+
+.legal-text a:hover {
+  color: rgba(165, 180, 252, 1);
+  text-decoration: underline;
+}
+
+.legal-text ul {
+  margin: 0 0 12px;
+  padding-left: 20px;
+}
+
+.legal-text li {
+  font-size: 13px;
+  line-height: 1.65;
+  color: rgba(148, 163, 184, 0.9);
+  margin-bottom: 6px;
+}
+
+.legal-text strong {
+  color: rgba(226, 232, 240, 0.95);
+}
+
+.legal-meta {
+  font-size: 11px;
+  color: rgba(100, 116, 139, 0.7);
+  margin-top: 24px;
+}
+
+.legal-contact-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin: 12px 0 20px;
+}
+
+.legal-contact-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.legal-contact-label {
+  min-width: 70px;
+  font-weight: 600;
+  color: rgba(148, 163, 184, 0.7);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.legal-contact-row a {
+  color: rgba(129, 140, 248, 0.9);
+  text-decoration: none;
+}
+
+.legal-contact-row a:hover {
+  color: rgba(165, 180, 252, 1);
+  text-decoration: underline;
+}
+
+/* ─── Responsive ─── */
+
+@media (max-width: 560px) {
+  .auth-dialog-wide {
+    width: 100%;
+  }
+
+  .account-metrics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1080px) {
+  .pricing-plans-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pricing-dialog-intro {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 700px) {
+  .welcome-overlay.auth-dialog-pricing {
+    width: min(100%, 94vw);
+  }
+
+  .pricing-plans-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pricing-plan-card {
+    min-height: 0;
+  }
+}
+
+/* Account Dialog Overrides */
+
+.account-dialog-content {
+  gap: 20px;
+}
+
+.account-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.account-hero-copy {
+  gap: 6px;
+}
+
+.account-hero-kicker,
+.account-panel-label {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.34);
+}
+
+.account-hero-meta {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.account-hero-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.account-hero-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.account-hero-badge-accent {
+  border-color: rgba(232, 210, 145, 0.34);
+  background: rgba(232, 210, 145, 0.1);
+  color: rgba(255, 237, 187, 0.96);
+}
+
+.account-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.account-metrics-grid {
+  gap: 12px;
+}
+
+.account-metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 132px;
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.06), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.02));
+  text-align: left;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.account-metric-card-plan {
+  background:
+    radial-gradient(circle at top left, rgba(149, 176, 255, 0.16), transparent 46%),
+    linear-gradient(180deg, rgba(197, 215, 255, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+.account-metric-card-credits {
+  background:
+    radial-gradient(circle at top left, rgba(232, 210, 145, 0.14), transparent 44%),
+    linear-gradient(180deg, rgba(255, 244, 204, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+.account-metric-card-hosted {
+  background:
+    radial-gradient(circle at top left, rgba(178, 218, 193, 0.14), transparent 44%),
+    linear-gradient(180deg, rgba(212, 246, 223, 0.07), rgba(255, 255, 255, 0.02));
+}
+
+.account-metric-label {
+  margin-bottom: 0;
+  font-weight: 700;
+}
+
+.account-metric-value {
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.account-metric-detail {
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.account-usage-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.04), transparent 40%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.015));
+}
+
+.account-usage-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.account-usage-summary {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.44);
+}
+
+.account-usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.account-usage-entry {
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.account-usage-feature {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.account-usage-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.account-usage-detail {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.44);
+}
+
+.account-usage-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.54);
+}
+
+.account-usage-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font-size: inherit;
+}
+
+.account-usage-empty-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.account-usage-empty-detail {
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.account-actions-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.account-actions-row .auth-dialog-submit,
+.account-actions-row .auth-dialog-action-secondary {
+  width: 100%;
+}
+
+.account-actions-row-single {
+  grid-template-columns: 1fr;
+}
+
+.account-signout-row {
+  padding-top: 8px;
+}
+
+/* Pricing Dialog Interaction Overrides */
+
+.pricing-plan-selectable {
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease;
+}
+
+.pricing-plan-selectable:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.pricing-plan-selectable:focus-visible {
+  outline: none;
+  border-color: rgba(232, 210, 145, 0.44);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(232, 210, 145, 0.34);
+}
+
+.pricing-plan-disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.pricing-plan-current {
+  border-color: rgba(216, 190, 118, 0.22);
+}
+
+.pricing-plan-current::after {
+  content: none;
+}
+
+.pricing-plan-selected {
+  border-color: rgba(232, 210, 145, 0.44);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 244, 204, 0.08),
+    0 16px 32px rgba(0, 0, 0, 0.18);
+}
+
+.pricing-plan-selected::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 22px;
+  border: 1px solid rgba(232, 210, 145, 0.56);
+  pointer-events: none;
+}
+
+.pricing-plan-badge-next {
+  border-color: rgba(232, 210, 145, 0.44);
+  background: rgba(232, 210, 145, 0.12);
+  color: rgba(255, 237, 187, 0.96);
+}
+
+.pricing-dialog-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 18px 20px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.05), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.02));
+}
+
+.pricing-dialog-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pricing-dialog-selection-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.34);
+}
+
+.pricing-dialog-selection-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.pricing-dialog-selection-note {
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.pricing-dialog-submit {
+  margin-top: 0;
+  min-width: 250px;
+}
+
+@media (max-width: 700px) {
+  .account-hero {
+    flex-direction: column;
+  }
+
+  .account-hero-badges {
+    justify-content: flex-start;
+  }
+
+  .account-actions-row {
+    grid-template-columns: 1fr;
+  }
+
+  .account-usage-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .account-usage-entry {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .pricing-dialog-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .pricing-dialog-submit {
+    min-width: 0;
+    width: 100%;
+  }
+}

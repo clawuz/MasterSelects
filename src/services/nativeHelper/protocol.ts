@@ -1,0 +1,534 @@
+/**
+ * Native Helper Protocol Types
+ *
+ * Defines the message types for communication with the native helper
+ * via WebSocket.
+ */
+
+// Message type bytes
+export const MESSAGE_TYPES = {
+  COMMAND: 0x01,
+  FRAME: 0x02,
+  RESPONSE: 0x03,
+  ERROR: 0x04,
+  PROGRESS: 0x05,
+} as const;
+
+// Frame flags
+export const FRAME_FLAGS = {
+  COMPRESSED: 0x01,
+  SCALED: 0x02,
+  DELTA: 0x04,
+  JPEG: 0x08,
+} as const;
+
+// Magic bytes
+export const MAGIC = new Uint8Array([0x4D, 0x48]); // "MH"
+
+// Commands
+export interface AuthCommand {
+  cmd: 'auth';
+  id: string;
+  token: string;
+}
+
+export interface OpenCommand {
+  cmd: 'open';
+  id: string;
+  path: string;
+}
+
+export interface DecodeCommand {
+  cmd: 'decode';
+  id: string;
+  file_id: string;
+  frame: number;
+  format?: 'rgba8' | 'rgb8' | 'yuv420';
+  scale?: number;
+  compression?: 'lz4';
+}
+
+export interface DecodeRangeCommand {
+  cmd: 'decode_range';
+  id: string;
+  file_id: string;
+  start_frame: number;
+  end_frame: number;
+  priority?: 'low' | 'normal' | 'high';
+}
+
+export interface PrefetchCommand {
+  cmd: 'prefetch';
+  file_id: string;
+  around_frame: number;
+  radius?: number;
+}
+
+export interface StartEncodeCommand {
+  cmd: 'start_encode';
+  id: string;
+  output: EncodeOutput;
+  frame_count: number;
+}
+
+export interface EncodeFrameCommand {
+  cmd: 'encode_frame';
+  id: string;
+  frame_num: number;
+}
+
+export interface FinishEncodeCommand {
+  cmd: 'finish_encode';
+  id: string;
+}
+
+export interface CancelEncodeCommand {
+  cmd: 'cancel_encode';
+  id: string;
+}
+
+export interface CloseCommand {
+  cmd: 'close';
+  id: string;
+  file_id: string;
+}
+
+export interface InfoCommand {
+  cmd: 'info';
+  id: string;
+}
+
+export interface PingCommand {
+  cmd: 'ping';
+  id: string;
+}
+
+export interface RegisterClientCommand {
+  cmd: 'register_client';
+  id: string;
+  role: string;
+  capabilities?: string[];
+  session_name?: string;
+  app_version?: string;
+}
+
+export interface AiToolResultCommand {
+  cmd: 'ai_tool_result';
+  id: string;
+  request_id: string;
+  result: unknown;
+}
+
+export interface DownloadYouTubeCommand {
+  cmd: 'download_youtube';
+  id: string;
+  url: string;
+  format_id?: string;
+  output_dir?: string;
+}
+
+export interface ListFormatsCommand {
+  cmd: 'list_formats';
+  id: string;
+  url: string;
+}
+
+export interface DownloadCommand {
+  cmd: 'download';
+  id: string;
+  url: string;
+  format_id?: string;
+  output_dir?: string;
+}
+
+export interface FormatInfo {
+  format_id: string;
+  ext: string;
+  resolution: string;
+  fps: number | null;
+  vcodec: string | null;
+  acodec: string | null;
+  filesize: number | null;
+  tbr: number | null;
+  format_note: string;
+  hasVideo: boolean;
+  hasAudio: boolean;
+}
+
+export interface FormatRecommendation {
+  id: string;
+  label: string;
+  resolution: string;
+  vcodec: string | null;
+  acodec: string | null;
+  needsMerge: boolean;
+}
+
+export interface VideoInfo {
+  title: string;
+  thumbnail: string;
+  duration: number;
+  uploader: string;
+  platform?: string;
+  recommendations: FormatRecommendation[];
+  allFormats: FormatInfo[];
+}
+
+export interface GetFileCommand {
+  cmd: 'get_file';
+  id: string;
+  path: string;
+}
+
+export interface LocateCommand {
+  cmd: 'locate';
+  id: string;
+  filename: string;
+  search_dirs?: string[];
+}
+
+// ── File System Commands ──
+
+export interface WriteFileCommand {
+  cmd: 'write_file';
+  id: string;
+  path: string;
+  data: string;
+  encoding?: 'utf8' | 'base64';
+}
+
+export interface CreateDirCommand {
+  cmd: 'create_dir';
+  id: string;
+  path: string;
+  recursive?: boolean;
+}
+
+export interface ListDirCommand {
+  cmd: 'list_dir';
+  id: string;
+  path: string;
+}
+
+export interface DeleteCommand {
+  cmd: 'delete';
+  id: string;
+  path: string;
+  recursive?: boolean;
+}
+
+export interface ExistsCommand {
+  cmd: 'exists';
+  id: string;
+  path: string;
+}
+
+export interface RenameCommand {
+  cmd: 'rename';
+  id: string;
+  old_path: string;
+  new_path: string;
+}
+
+export interface GrantPathCommand {
+  cmd: 'grant_path';
+  id: string;
+  path: string;
+}
+
+export interface DirEntry {
+  name: string;
+  kind: 'file' | 'directory';
+  size: number;
+  modified: number;
+}
+
+// ── MatAnyone2 Commands ──
+
+export interface MatAnyoneStatusCommand {
+  cmd: 'mat_anyone_status';
+  id: string;
+}
+
+export interface MatAnyoneSetupCommand {
+  cmd: 'mat_anyone_setup';
+  id: string;
+  python_path?: string;
+}
+
+export interface MatAnyoneDownloadModelCommand {
+  cmd: 'mat_anyone_download_model';
+  id: string;
+}
+
+export interface MatAnyoneStartCommand {
+  cmd: 'mat_anyone_start';
+  id: string;
+}
+
+export interface MatAnyoneStopCommand {
+  cmd: 'mat_anyone_stop';
+  id: string;
+}
+
+export interface MatAnyoneMatteCommand {
+  cmd: 'mat_anyone_matte';
+  id: string;
+  video_path: string;
+  mask_path: string;
+  output_dir: string;
+  start_frame?: number;
+  end_frame?: number;
+}
+
+export interface MatAnyoneCancelCommand {
+  cmd: 'mat_anyone_cancel';
+  id: string;
+  job_id: string;
+}
+
+export interface MatAnyoneUninstallCommand {
+  cmd: 'mat_anyone_uninstall';
+  id: string;
+}
+
+export type Command =
+  | AuthCommand
+  | OpenCommand
+  | DecodeCommand
+  | DecodeRangeCommand
+  | PrefetchCommand
+  | StartEncodeCommand
+  | EncodeFrameCommand
+  | FinishEncodeCommand
+  | CancelEncodeCommand
+  | CloseCommand
+  | InfoCommand
+  | PingCommand
+  | RegisterClientCommand
+  | AiToolResultCommand
+  | DownloadYouTubeCommand
+  | ListFormatsCommand
+  | DownloadCommand
+  | GetFileCommand
+  | LocateCommand
+  | WriteFileCommand
+  | CreateDirCommand
+  | ListDirCommand
+  | DeleteCommand
+  | ExistsCommand
+  | RenameCommand
+  | GrantPathCommand
+  | MatAnyoneStatusCommand
+  | MatAnyoneSetupCommand
+  | MatAnyoneDownloadModelCommand
+  | MatAnyoneStartCommand
+  | MatAnyoneStopCommand
+  | MatAnyoneMatteCommand
+  | MatAnyoneCancelCommand
+  | MatAnyoneUninstallCommand;
+
+// Encode settings
+export interface EncodeOutput {
+  path: string;
+  codec: 'prores' | 'dnxhd' | 'h264' | 'h265' | 'vp9' | 'ffv1' | 'utvideo' | 'mjpeg';
+  profile?: string;
+  width: number;
+  height: number;
+  fps: number;
+  audio?: AudioSettings;
+}
+
+export interface AudioSettings {
+  codec: 'aac' | 'flac' | 'pcm' | 'alac';
+  sample_rate: number;
+  channels: number;
+  bitrate?: number;
+}
+
+// Responses
+export interface OkResponse {
+  id: string;
+  ok: true;
+  [key: string]: unknown;
+}
+
+export interface ErrorResponse {
+  id: string;
+  ok: false;
+  error: {
+    code: string;
+    message: string;
+  };
+}
+
+export interface ProgressResponse {
+  id: string;
+  ok?: undefined;  // Distinguish from OkResponse/ErrorResponse
+  progress: number;
+  frames_done: number;
+  frames_total: number;
+  eta_ms?: number;
+}
+
+export type Response = OkResponse | ErrorResponse | ProgressResponse;
+
+// Type guard for checking if response is a command result (has ok property)
+export function isCommandResponse(response: Response): response is OkResponse | ErrorResponse {
+  return 'ok' in response && response.ok !== undefined;
+}
+
+// File metadata
+export interface FileMetadata {
+  file_id: string;
+  width: number;
+  height: number;
+  fps: number;
+  duration_ms: number;
+  frame_count: number;
+  codec: string;
+  profile?: string;
+  color_space?: string;
+  audio_tracks: number;
+  hw_accel?: string;
+}
+
+// System info
+export interface SystemInfo {
+  version: string;
+  ffmpeg_version?: string;
+  hw_accel?: string[];
+  cache_used_mb?: number;
+  cache_max_mb?: number;
+  open_files?: number;
+  // v0.3+ fields
+  ytdlp_available?: boolean;
+  download_dir?: string;
+  project_root?: string;
+  /** True if native helper supports file system commands (write_file, create_dir, etc.) */
+  fs_commands?: boolean;
+  /** True if helper can proxy AI tool requests to the running editor */
+  ai_bridge?: boolean;
+  /** True if an editor session is currently registered */
+  editor_connected?: boolean;
+}
+
+// Frame header (16 bytes)
+export interface FrameHeader {
+  type: number;
+  flags: number;
+  width: number;
+  height: number;
+  frameNum: number;
+  requestId: number;
+}
+
+/**
+ * Parse a binary frame message header
+ */
+export function parseFrameHeader(data: ArrayBuffer): FrameHeader | null {
+  if (data.byteLength < 16) {
+    return null;
+  }
+
+  const view = new DataView(data);
+
+  // Check magic bytes
+  if (view.getUint8(0) !== 0x4D || view.getUint8(1) !== 0x48) {
+    return null;
+  }
+
+  return {
+    type: view.getUint8(2),
+    flags: view.getUint8(3),
+    width: view.getUint16(4, true),
+    height: view.getUint16(6, true),
+    frameNum: view.getUint32(8, true),
+    requestId: view.getUint32(12, true),
+  };
+}
+
+/**
+ * Check if frame is compressed
+ */
+export function isCompressed(flags: number): boolean {
+  return (flags & FRAME_FLAGS.COMPRESSED) !== 0;
+}
+
+/**
+ * Check if frame is scaled
+ */
+export function isScaled(flags: number): boolean {
+  return (flags & FRAME_FLAGS.SCALED) !== 0;
+}
+
+/**
+ * Check if frame payload is JPEG-encoded
+ */
+export function isJpeg(flags: number): boolean {
+  return (flags & FRAME_FLAGS.JPEG) !== 0;
+}
+
+// ── MatAnyone2 Types ──
+
+export interface MatAnyoneStatusResponse {
+  setup_status: 'not_installed' | 'installed' | 'running' | 'error';
+  python_version: string | null;
+  cuda_available: boolean;
+  cuda_version: string | null;
+  gpu_name: string | null;
+  vram_mb: number | null;
+  model_downloaded: boolean;
+  venv_exists: boolean;
+  deps_installed: boolean;
+  matanyone_installed: boolean;
+  server_running: boolean;
+  server_port: number | null;
+}
+
+export interface MatAnyoneSetupProgress {
+  type: 'progress';
+  step: string;
+  percent: number;
+  message: string;
+}
+
+export interface MatAnyoneDownloadProgress {
+  type: 'progress';
+  step: 'download_model';
+  percent: number;
+  speed?: string;
+  eta?: string;
+}
+
+export interface MatAnyoneMatteProgress {
+  type: 'progress';
+  step: 'matting';
+  job_id?: string;
+  current_frame: number;
+  total_frames: number;
+  percent: number;
+}
+
+export interface MatAnyoneMatteResult {
+  foreground_path: string;
+  alpha_path: string;
+  job_id: string;
+}
+
+// Error codes
+export const ERROR_CODES = {
+  AUTH_REQUIRED: 'AUTH_REQUIRED',
+  INVALID_TOKEN: 'INVALID_TOKEN',
+  FILE_NOT_FOUND: 'FILE_NOT_FOUND',
+  PERMISSION_DENIED: 'PERMISSION_DENIED',
+  UNSUPPORTED_CODEC: 'UNSUPPORTED_CODEC',
+  DECODE_ERROR: 'DECODE_ERROR',
+  ENCODE_ERROR: 'ENCODE_ERROR',
+  OUT_OF_MEMORY: 'OUT_OF_MEMORY',
+  INVALID_FRAME: 'INVALID_FRAME',
+  INVALID_PATH: 'INVALID_PATH',
+  FILE_NOT_OPEN: 'FILE_NOT_OPEN',
+  ENCODE_NOT_STARTED: 'ENCODE_NOT_STARTED',
+  INTERNAL_ERROR: 'INTERNAL_ERROR',
+} as const;

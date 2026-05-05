@@ -1,0 +1,619 @@
+// Timeline store types and interfaces
+
+import type {
+  TimelineClip,
+  TimelineTrack,
+  ClipTransform,
+  CompositionTimelineData,
+  Keyframe,
+  AnimatableProperty,
+  EasingType,
+  BezierHandle,
+  ClipMask,
+  MaskVertex,
+  MaskVertexHandleMode,
+  Effect,
+  ColorCorrectionState,
+  ColorNodeType,
+  ColorParamValue,
+  ColorViewMode,
+  RuntimeColorGrade,
+  TextClipProperties,
+  Text3DProperties,
+  MathSceneDefinition,
+  MathObject,
+  MathParameter,
+  Layer,
+  SerializableClip,
+} from '../../types';
+import type { Composition } from '../mediaStore';
+import type { VectorAnimationClipSettings } from '../../types/vectorAnimation';
+import type { MarkerMIDIBinding } from '../../types/midi';
+
+// Re-export imported types for convenience
+export type {
+  TimelineClip,
+  TimelineTrack,
+  ClipTransform,
+  CompositionTimelineData,
+  Keyframe,
+  AnimatableProperty,
+  EasingType,
+  BezierHandle,
+  ClipMask,
+  MaskVertex,
+  MaskVertexHandleMode,
+  Effect,
+  ColorCorrectionState,
+  ColorNodeType,
+  ColorParamValue,
+  ColorViewMode,
+  RuntimeColorGrade,
+  Composition,
+  TextClipProperties,
+  Text3DProperties,
+  MathSceneDefinition,
+  MathObject,
+  MathParameter,
+  Layer,
+  SerializableClip,
+};
+
+// Mask edit mode types
+export type MaskEditMode = 'none' | 'drawing' | 'editing' | 'drawingRect' | 'drawingEllipse' | 'drawingPen';
+
+// Timeline tool mode types
+export type TimelineToolMode = 'select' | 'cut';
+
+// AI action visual feedback types
+export type AIActionOverlayType = 'split-glow' | 'delete-ghost' | 'trim-highlight' | 'silent-zone' | 'low-quality-zone';
+
+export interface AIActionOverlay {
+  id: string;
+  type: AIActionOverlayType;
+  trackId: string;
+  timePosition: number;   // timeline seconds
+  width?: number;          // duration in seconds (for delete ghost)
+  clipName?: string;       // display name (for delete ghost)
+  clipColor?: string;      // background color (for delete ghost)
+  createdAt: number;
+  duration: number;        // animation duration in ms
+  animationDelay?: number; // delay before animation starts in ms (for staggering)
+}
+
+export interface AIMovingClip {
+  clipId: string;
+  fromStartTime: number;   // old position in seconds
+  animationDuration: number; // ms
+  startedAt: number;
+}
+
+// Timeline marker type
+export interface TimelineMarker {
+  id: string;
+  time: number;
+  label: string;
+  color: string;
+  stopPlayback?: boolean;
+  midiBindings?: MarkerMIDIBinding[];
+}
+
+// Timeline state interface
+export interface TimelineState {
+  // Core state
+  tracks: TimelineTrack[];
+  clips: TimelineClip[];
+  playheadPosition: number;
+  duration: number;
+  zoom: number;
+  scrollX: number;
+  snappingEnabled: boolean;
+  isPlaying: boolean;
+  isDraggingPlayhead: boolean;
+  selectedClipIds: Set<string>;
+  primarySelectedClipId: string | null; // The clip the user actually clicked (for Properties panel)
+
+  // Render layers (populated by useLayerSync from timeline clips, used by engine)
+  layers: Layer[];
+  selectedLayerId: string | null;
+
+  // In/Out markers
+  inPoint: number | null;
+  outPoint: number | null;
+  loopPlayback: boolean;
+
+  // Playback speed (1 = normal, 2 = 2x, -1 = reverse, etc.)
+  playbackSpeed: number;
+
+  // Duration lock (when true, duration won't auto-update based on clips)
+  durationLocked: boolean;
+
+  // RAM Preview state
+  ramPreviewEnabled: boolean;
+  ramPreviewProgress: number | null;
+  ramPreviewRange: { start: number; end: number } | null;
+  isRamPreviewing: boolean;
+  cachedFrameTimes: Set<number>;
+
+  // Proxy cache preloading state
+  isProxyCaching: boolean;
+  proxyCacheProgress: number | null;  // 0-100 percentage
+
+  // Export progress state
+  isExporting: boolean;
+  exportProgress: number | null;  // 0-100 percentage
+  exportCurrentTime: number | null;  // Current time being rendered
+  exportRange: { start: number; end: number } | null;
+
+  // Performance toggles
+  thumbnailsEnabled: boolean;
+  waveformsEnabled: boolean;
+  showTranscriptMarkers: boolean;
+
+  // Keyframe animation state
+  clipKeyframes: Map<string, Keyframe[]>;
+  keyframeRecordingEnabled: Set<string>;
+  expandedTracks: Set<string>;
+  expandedTrackPropertyGroups: Map<string, Set<string>>;
+  selectedKeyframeIds: Set<string>;
+  expandedCurveProperties: Map<string, Set<AnimatableProperty>>;  // trackId -> expanded curve editors
+  curveEditorHeight: number;
+
+  // Mask state
+  maskEditMode: MaskEditMode;
+  maskPanelActive: boolean;
+  activeMaskId: string | null;
+  selectedVertexIds: Set<string>;
+  maskDrawStart: { x: number; y: number } | null;
+  maskDragging: boolean; // True during vertex/mask drag - skips texture regeneration
+
+  // Tool mode
+  toolMode: TimelineToolMode;
+
+  // Timeline markers
+  markers: TimelineMarker[];
+
+  // Clip entrance animation key (increments on composition switch to trigger animations)
+  clipEntranceAnimationKey: number;
+
+  // Clip animation phase for enter/exit transitions
+  clipAnimationPhase: 'idle' | 'exiting' | 'entering';
+
+  // Direction derived from composition tab positions
+  compositionSwitchDirection: 'forward' | 'backward';
+
+  // Target track layout shown while old clips exit during a composition switch
+  compositionSwitchTargetTracks: TimelineTrack[] | null;
+
+  // Slot grid view progress (0 = full timeline, 1 = full grid view)
+  slotGridProgress: number;
+
+  // AI action visual feedback (transient, not serialized)
+  aiActionOverlays: AIActionOverlay[];
+  aiMovingClips: Map<string, AIMovingClip>;
+
+  // Incremented whenever the live timeline is cleared/reloaded.
+  // Async callbacks must verify this to avoid writing stale nested clip UI.
+  timelineSessionId: number;
+}
+
+// Track actions interface
+export interface TrackActions {
+  addTrack: (type: 'video' | 'audio') => string;
+  removeTrack: (id: string) => void;
+  renameTrack: (id: string, name: string) => void;
+  setTrackMuted: (id: string, muted: boolean) => void;
+  setTrackVisible: (id: string, visible: boolean) => void;
+  setTrackSolo: (id: string, solo: boolean) => void;
+  setTrackHeight: (id: string, height: number) => void;
+  scaleTracksOfType: (type: 'video' | 'audio', delta: number) => void;
+  // Track parenting (layer linking)
+  setTrackParent: (trackId: string, parentTrackId: string | null) => void;
+  getTrackChildren: (trackId: string) => TimelineTrack[];
+}
+
+// Clip actions interface
+// Text clip actions (extracted to textClipSlice)
+export interface TextClipActions {
+  addTextClip: (trackId: string, startTime: number, duration?: number, skipMediaItem?: boolean) => Promise<string | null>;
+  updateTextProperties: (clipId: string, props: Partial<TextClipProperties>) => void;
+}
+
+// Solid clip actions (extracted to solidClipSlice)
+export interface SolidClipActions {
+  addSolidClip: (trackId: string, startTime: number, color?: string, duration?: number, skipMediaItem?: boolean) => string | null;
+  updateSolidColor: (clipId: string, color: string) => void;
+}
+
+export interface MathSceneClipActions {
+  addMathSceneClip: (trackId: string, startTime: number, duration?: number, skipMediaItem?: boolean) => string | null;
+  updateMathScene: (clipId: string, updater: (scene: MathSceneDefinition) => MathSceneDefinition) => void;
+  addMathObject: (clipId: string, object: MathObject) => void;
+  updateMathObject: (clipId: string, objectId: string, patch: Partial<MathObject>) => void;
+  removeMathObject: (clipId: string, objectId: string) => void;
+  updateMathParameter: (clipId: string, parameterId: string, patch: Partial<MathParameter>) => void;
+}
+
+// Mesh clip actions (extracted to meshClipSlice)
+export interface MeshClipActions {
+  addMeshClip: (trackId: string, startTime: number, meshType: import('../mediaStore/types').MeshPrimitiveType, duration?: number, skipMediaItem?: boolean) => string | null;
+  updateText3DProperties: (clipId: string, props: Partial<Text3DProperties>) => void;
+}
+
+// Camera clip actions (shared 3D scene camera)
+export interface CameraClipActions {
+  addCameraClip: (trackId: string, startTime: number, duration?: number, skipMediaItem?: boolean) => string | null;
+}
+
+export interface SplatEffectorClipActions {
+  addSplatEffectorClip: (trackId: string, startTime: number, duration?: number, skipMediaItem?: boolean) => string | null;
+}
+
+// Clip effect actions (extracted to clipEffectSlice)
+export interface ClipEffectActions {
+  addClipEffect: (clipId: string, effectType: string) => void;
+  removeClipEffect: (clipId: string, effectId: string) => void;
+  updateClipEffect: (clipId: string, effectId: string, params: Partial<Effect['params']>) => void;
+  setClipEffectEnabled: (clipId: string, effectId: string, enabled: boolean) => void;
+  reorderClipEffect: (clipId: string, effectId: string, newIndex: number) => void;
+}
+
+export interface ColorCorrectionActions {
+  ensureColorCorrection: (clipId: string) => void;
+  updateColorCorrection: (clipId: string, updater: (current: ColorCorrectionState) => ColorCorrectionState) => void;
+  setColorCorrectionEnabled: (clipId: string, enabled: boolean) => void;
+  setColorViewMode: (clipId: string, viewMode: ColorViewMode) => void;
+  setColorWorkspaceViewport: (clipId: string, viewport: NonNullable<ColorCorrectionState['ui']['workspaceViewport']>) => void;
+  selectColorNode: (clipId: string, nodeId: string | undefined) => void;
+  addColorNode: (clipId: string, type?: ColorNodeType) => string;
+  removeColorNode: (clipId: string, nodeId: string) => void;
+  moveColorNode: (clipId: string, nodeId: string, position: { x: number; y: number }) => void;
+  connectColorNodes: (clipId: string, fromNodeId: string, toNodeId: string) => void;
+  removeColorEdge: (clipId: string, edgeId: string) => void;
+  updateColorNodeParam: (clipId: string, versionId: string, nodeId: string, paramName: string, value: ColorParamValue) => void;
+  setColorNodeEnabled: (clipId: string, nodeId: string, enabled: boolean) => void;
+  renameColorNode: (clipId: string, nodeId: string, name: string) => void;
+  resetColorNode: (clipId: string, nodeId: string) => void;
+  resetColorCorrection: (clipId: string) => void;
+  duplicateColorVersion: (clipId: string) => string;
+  deleteColorVersion: (clipId: string, versionId: string) => void;
+  setActiveColorVersion: (clipId: string, versionId: string) => void;
+}
+
+// Multicam linked group actions (extracted to linkedGroupSlice)
+export interface LinkedGroupActions {
+  createLinkedGroup: (clipIds: string[], offsets: Map<string, number>) => void;
+  unlinkGroup: (clipId: string) => void;
+}
+
+// YouTube download clip actions (extracted to downloadClipSlice)
+export interface DownloadClipActions {
+  addPendingDownloadClip: (trackId: string, startTime: number, videoId: string, title: string, thumbnail: string, estimatedDuration?: number) => string;
+  updateDownloadProgress: (clipId: string, progress: number, speed?: string) => void;
+  completeDownload: (clipId: string, file: File) => Promise<void>;
+  setDownloadError: (clipId: string, error: string) => void;
+}
+
+export type ClipTransformUpdate = Omit<Partial<ClipTransform>, 'position' | 'scale' | 'rotation'> & {
+  position?: Partial<ClipTransform['position']>;
+  scale?: Partial<ClipTransform['scale']>;
+  rotation?: Partial<ClipTransform['rotation']>;
+};
+
+// Core clip actions (remain in clipSlice)
+export interface CoreClipActions {
+  addClip: (trackId: string, file: File, startTime: number, estimatedDuration?: number, mediaFileId?: string, mediaTypeOverride?: string) => Promise<void>;
+  addCompClip: (trackId: string, composition: Composition, startTime: number) => void;
+  updateClip: (id: string, updates: Partial<TimelineClip>) => void;
+  removeClip: (id: string) => void;
+  moveClip: (id: string, newStartTime: number, newTrackId?: string, skipLinked?: boolean, skipGroup?: boolean, skipTrim?: boolean, excludeClipIds?: string[]) => void;
+  trimClip: (id: string, inPoint: number, outPoint: number) => void;
+  splitClip: (clipId: string, splitTime: number) => void;
+  splitClipAtPlayhead: () => void;
+  updateClipTransform: (id: string, transform: ClipTransformUpdate) => void;
+  toggleClipReverse: (id: string) => void;
+  generateWaveformForClip: (clipId: string) => Promise<void>;
+  setClipParent: (clipId: string, parentClipId: string | null) => void;
+  getClipChildren: (clipId: string) => TimelineClip[];
+  setClipPreservesPitch: (clipId: string, preservesPitch: boolean) => void;
+  refreshCompClipNestedData: (sourceCompositionId: string) => Promise<void>;
+  toggle3D: (clipId: string) => void;
+}
+
+// Combined ClipActions = all sub-interfaces
+export type ClipActions = CoreClipActions & TextClipActions & SolidClipActions & MathSceneClipActions & MeshClipActions & CameraClipActions & SplatEffectorClipActions & ClipEffectActions & ColorCorrectionActions & LinkedGroupActions & DownloadClipActions;
+
+// Playback actions interface
+export interface PlaybackActions {
+  setPlayheadPosition: (position: number) => void;
+  setDraggingPlayhead: (dragging: boolean) => void;
+  play: () => Promise<void>;
+  pause: () => void;
+  stop: () => void;
+  setZoom: (zoom: number) => void;
+  toggleSnapping: () => void;
+  setScrollX: (scrollX: number) => void;
+  setInPoint: (time: number | null) => void;
+  setOutPoint: (time: number | null) => void;
+  clearInOut: () => void;
+  setInPointAtPlayhead: () => void;
+  setOutPointAtPlayhead: () => void;
+  setLoopPlayback: (loop: boolean) => void;
+  toggleLoopPlayback: () => void;
+  setPlaybackSpeed: (speed: number) => void;
+  // JKL playback control
+  playForward: () => void;
+  playReverse: () => void;
+  setDuration: (duration: number) => void;
+  // Tool mode
+  setToolMode: (mode: TimelineToolMode) => void;
+  toggleCutTool: () => void;
+  // Clip animation phase for composition transitions
+  setClipAnimationPhase: (phase: 'idle' | 'exiting' | 'entering') => void;
+  setCompositionSwitchDirection: (direction: 'forward' | 'backward') => void;
+  setCompositionSwitchTargetTracks: (tracks: TimelineTrack[] | null) => void;
+  // Slot grid view
+  setSlotGridProgress: (progress: number) => void;
+  // Performance toggles
+  toggleThumbnailsEnabled: () => void;
+  toggleWaveformsEnabled: () => void;
+  setThumbnailsEnabled: (enabled: boolean) => void;
+  setWaveformsEnabled: (enabled: boolean) => void;
+  toggleTranscriptMarkers: () => void;
+  setShowTranscriptMarkers: (enabled: boolean) => void;
+}
+
+// RAM Preview actions interface
+export interface RamPreviewActions {
+  toggleRamPreviewEnabled: () => void;
+  startRamPreview: () => Promise<void>;
+  cancelRamPreview: () => void;
+  clearRamPreview: () => void;
+  addCachedFrame: (time: number) => void;
+  getCachedRanges: () => Array<{ start: number; end: number }>;
+}
+
+// Proxy cache actions interface
+export interface ProxyCacheActions {
+  getProxyCachedRanges: () => Array<{ start: number; end: number }>;
+  invalidateCache: () => void;
+  startProxyCachePreload: () => Promise<void>;
+  cancelProxyCachePreload: () => void;
+}
+
+// Export progress actions interface
+export interface ExportActions {
+  setExportProgress: (progress: number | null, currentTime: number | null) => void;
+  startExport: (start: number, end: number) => void;
+  endExport: () => void;
+}
+
+// Selection actions interface
+export interface SelectionActions {
+  // Clip selection (multi-select support)
+  selectClip: (id: string | null, addToSelection?: boolean, setPrimaryOnly?: boolean) => void;
+  selectClips: (ids: string[]) => void;
+  addClipToSelection: (id: string) => void;
+  removeClipFromSelection: (id: string) => void;
+  clearClipSelection: () => void;
+  // Keyframe selection
+  selectKeyframe: (keyframeId: string, addToSelection?: boolean) => void;
+  deselectAllKeyframes: () => void;
+  deleteSelectedKeyframes: () => void;
+}
+
+// Keyframe actions interface
+export interface KeyframeActions {
+  addKeyframe: (clipId: string, property: AnimatableProperty, value: number, time?: number, easing?: string | null) => void;
+  removeKeyframe: (keyframeId: string) => void;
+  updateKeyframe: (keyframeId: string, updates: Partial<Omit<Keyframe, 'id' | 'clipId' | 'easing'>> & { easing?: string | null }) => void;
+  moveKeyframe: (keyframeId: string, newTime: number) => void;
+  moveKeyframes: (keyframeIds: string[], newTime: number) => void;
+  getClipKeyframes: (clipId: string) => Keyframe[];
+  getInterpolatedTransform: (clipId: string, clipLocalTime: number) => ClipTransform;
+  getInterpolatedCameraSettings: (clipId: string, clipLocalTime: number) => import('../mediaStore/types').SceneCameraSettings;
+  getInterpolatedEffects: (clipId: string, clipLocalTime: number) => Effect[];
+  getInterpolatedColorCorrection: (clipId: string, clipLocalTime: number) => RuntimeColorGrade | undefined;
+  getInterpolatedVectorAnimationSettings: (clipId: string, clipLocalTime: number) => VectorAnimationClipSettings;
+  getInterpolatedMasks: (clipId: string, clipLocalTime: number) => ClipMask[] | undefined;
+  getInterpolatedSpeed: (clipId: string, clipLocalTime: number) => number;
+  getSourceTimeForClip: (clipId: string, clipLocalTime: number) => number;
+  hasKeyframes: (clipId: string, property?: AnimatableProperty) => boolean;
+  toggleKeyframeRecording: (clipId: string, property: AnimatableProperty) => void;
+  isRecording: (clipId: string, property: AnimatableProperty) => boolean;
+  setPropertyValue: (clipId: string, property: AnimatableProperty, value: number) => void;
+  addMaskPathKeyframe: (clipId: string, maskId: string, pathValue?: Keyframe['pathValue'], time?: number, easing?: string | null) => void;
+  recordMaskPathKeyframe: (clipId: string, maskId: string) => void;
+  disableMaskPathKeyframes: (clipId: string, maskId: string, pathValue?: Keyframe['pathValue']) => void;
+  toggleTrackExpanded: (trackId: string) => void;
+  isTrackExpanded: (trackId: string) => boolean;
+  toggleTrackPropertyGroupExpanded: (trackId: string, groupName: string) => void;
+  isTrackPropertyGroupExpanded: (trackId: string, groupName: string) => boolean;
+  getExpandedTrackHeight: (trackId: string, baseHeight: number) => number;
+  trackHasKeyframes: (trackId: string) => boolean;
+  // Curve editor expansion
+  toggleCurveExpanded: (trackId: string, property: AnimatableProperty) => void;
+  isCurveExpanded: (trackId: string, property: AnimatableProperty) => boolean;
+  setCurveEditorHeight: (height: number) => void;
+  // Bezier handle manipulation
+  updateBezierHandle: (keyframeId: string, handle: 'in' | 'out', position: BezierHandle) => void;
+  // Disable keyframes for a property: save current value as static, remove all keyframes, disable recording
+  disablePropertyKeyframes: (clipId: string, property: AnimatableProperty, currentValue: number) => void;
+}
+
+// Layer actions interface (render layers for engine)
+export interface LayerActions {
+  setLayers: (layers: Layer[]) => void;
+  updateLayer: (id: string, updates: Partial<Layer>) => void;
+  selectLayer: (id: string | null) => void;
+}
+
+// Marker actions interface
+export interface MarkerActions {
+  addMarker: (time: number, label?: string, color?: string) => string;
+  removeMarker: (markerId: string) => void;
+  updateMarker: (markerId: string, updates: Partial<Omit<TimelineMarker, 'id'>>) => void;
+  moveMarker: (markerId: string, newTime: number) => void;
+  clearMarkers: () => void;
+}
+
+// Transition actions interface
+export interface TransitionActions {
+  applyTransition: (clipAId: string, clipBId: string, type: string, duration: number) => void;
+  removeTransition: (clipId: string, edge: 'in' | 'out') => void;
+  updateTransitionDuration: (clipId: string, edge: 'in' | 'out', duration: number) => void;
+  findClipJunction: (trackId: string, time: number, threshold?: number) => { clipA: TimelineClip; clipB: TimelineClip; junctionTime: number } | null;
+}
+
+// Clipboard data for copy/paste
+export interface ClipboardClipData {
+  // Serializable clip data (without DOM elements)
+  id: string;
+  trackId: string;
+  trackType: 'video' | 'audio';
+  name: string;
+  mediaFileId?: string;
+  startTime: number;
+  duration: number;
+  inPoint: number;
+  outPoint: number;
+  sourceType: SerializableClip['sourceType'];
+  naturalDuration?: number;
+  transform: ClipTransform;
+  effects: Effect[];
+  colorCorrection?: ColorCorrectionState;
+  masks?: ClipMask[];
+  keyframes?: Keyframe[];
+  linkedClipId?: string;
+  reversed?: boolean;
+  speed?: number;
+  preservesPitch?: boolean;
+  textProperties?: import('../../types').TextClipProperties;
+  text3DProperties?: import('../../types').Text3DProperties;
+  solidColor?: string;
+  mathScene?: MathSceneDefinition;
+  vectorAnimationSettings?: VectorAnimationClipSettings;
+  cameraSettings?: import('../mediaStore/types').SceneCameraSettings;
+  meshType?: import('../mediaStore/types').MeshPrimitiveType;
+  splatEffectorSettings?: import('../../types/splatEffector').SplatEffectorSettings;
+  threeDEffectorsEnabled?: boolean;
+  // Visual data (thumbnails, waveforms)
+  thumbnails?: string[];
+  waveform?: number[];
+  // Composition clips
+  isComposition?: boolean;
+  compositionId?: string;
+  is3D?: boolean;
+  wireframe?: boolean;
+}
+
+// Clipboard data for keyframe copy/paste
+export interface ClipboardKeyframeData {
+  clipId: string;
+  property: AnimatableProperty;
+  time: number;        // relative time within the copied set (0 = earliest)
+  value: number;
+  pathValue?: Keyframe['pathValue'];
+  easing: EasingType;
+  rotationInterpolation?: Keyframe['rotationInterpolation'];
+  handleIn?: BezierHandle;
+  handleOut?: BezierHandle;
+}
+
+export interface ClipboardState {
+  clipboardData: ClipboardClipData[] | null;
+  clipboardKeyframes: ClipboardKeyframeData[] | null;
+}
+
+// Clipboard actions interface
+export interface ClipboardActions {
+  copyClips: () => void;
+  pasteClips: () => void;
+  hasClipboardData: () => boolean;
+  copyKeyframes: () => void;
+  pasteKeyframes: () => void;
+}
+
+// Mask actions interface
+export interface MaskActions {
+  setMaskEditMode: (mode: MaskEditMode) => void;
+  setMaskPanelActive: (active: boolean) => void;
+  setMaskDragging: (dragging: boolean) => void;
+  setMaskDrawStart: (point: { x: number; y: number } | null) => void;
+  setActiveMask: (clipId: string | null, maskId: string | null) => void;
+  selectVertex: (vertexId: string, addToSelection?: boolean) => void;
+  selectVertices: (vertexIds: string[]) => void;
+  deselectAllVertices: () => void;
+  addMask: (clipId: string, mask?: Partial<ClipMask>) => string;
+  removeMask: (clipId: string, maskId: string) => void;
+  updateMask: (clipId: string, maskId: string, updates: Partial<ClipMask>) => void;
+  reorderMasks: (clipId: string, fromIndex: number, toIndex: number) => void;
+  getClipMasks: (clipId: string) => ClipMask[];
+  addVertex: (clipId: string, maskId: string, vertex: Omit<MaskVertex, 'id'>, index?: number) => string;
+  removeVertex: (clipId: string, maskId: string, vertexId: string) => void;
+  updateVertex: (clipId: string, maskId: string, vertexId: string, updates: Partial<MaskVertex>, skipCacheInvalidation?: boolean) => void;
+  updateVertices: (
+    clipId: string,
+    maskId: string,
+    vertexUpdates: Array<{ id: string; updates: Partial<MaskVertex> }>,
+    skipCacheInvalidation?: boolean
+  ) => void;
+  setVertexHandleMode: (clipId: string, maskId: string, vertexIds: string[], mode: MaskVertexHandleMode) => void;
+  closeMask: (clipId: string, maskId: string) => void;
+  addRectangleMask: (clipId: string) => string;
+  addEllipseMask: (clipId: string) => string;
+}
+
+// Utils interface
+export interface TimelineUtils {
+  getClipsAtTime: (time: number) => TimelineClip[];
+  updateDuration: () => void;
+  findAvailableAudioTrack: (startTime: number, duration: number) => string;
+  getSnappedPosition: (clipId: string, desiredStartTime: number, trackId: string) => { startTime: number; snapped: boolean; snapEdgeTime: number };
+  findNonOverlappingPosition: (clipId: string, desiredStartTime: number, trackId: string, duration: number) => number;
+  // Get position with magnetic resistance at clip edges - returns adjusted position and whether user has "broken through"
+  // Uses pixel-based resistance (zoom converts time distance to pixels)
+  // excludeClipIds: optional list of clip IDs to exclude from collision detection (for multi-select)
+  getPositionWithResistance: (clipId: string, desiredStartTime: number, trackId: string, duration: number, zoom?: number, excludeClipIds?: string[]) => { startTime: number; forcingOverlap: boolean; noFreeSpace?: boolean };
+  // Trim any clips that the placed clip overlaps with
+  // excludeClipIds: optional list of clip IDs to exclude from being trimmed (for multi-select)
+  trimOverlappingClips: (clipId: string, startTime: number, trackId: string, duration: number, excludeClipIds?: string[]) => void;
+  getSerializableState: () => CompositionTimelineData;
+  loadState: (data: CompositionTimelineData | undefined) => Promise<void>;
+  clearTimeline: () => void;
+}
+
+// AI Action Feedback actions
+export interface AIActionFeedbackActions {
+  addAIOverlay: (overlay: Omit<AIActionOverlay, 'id' | 'createdAt'>) => string;
+  addAIOverlaysBatch: (overlays: Omit<AIActionOverlay, 'id' | 'createdAt'>[]) => void;
+  removeAIOverlay: (id: string) => void;
+  setAIMovingClip: (clipId: string, fromStartTime: number, animationDuration?: number) => void;
+  clearAIMovingClip: (clipId: string) => void;
+}
+
+// Combined store interface
+export interface TimelineStore extends
+  TimelineState,
+  ClipboardState,
+  TrackActions,
+  ClipActions,
+  PlaybackActions,
+  RamPreviewActions,
+  ProxyCacheActions,
+  ExportActions,
+  SelectionActions,
+  KeyframeActions,
+  LayerActions,
+  MaskActions,
+  MarkerActions,
+  TransitionActions,
+  ClipboardActions,
+  AIActionFeedbackActions,
+  TimelineUtils {}
+
+// Slice creator type
+export type SliceCreator<T> = (
+  set: (partial: Partial<TimelineStore> | ((state: TimelineStore) => Partial<TimelineStore>)) => void,
+  get: () => TimelineStore
+) => T;

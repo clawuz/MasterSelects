@@ -1,0 +1,13 @@
+// Panels component exports
+export { MediaPanel } from './MediaPanel';
+export { ClipPropertiesPanel } from './ClipPropertiesPanel';
+export { PropertiesPanel } from './properties';
+export { MultiCamPanel } from './MultiCamPanel';
+export { TranscriptPanel } from './TranscriptPanel';
+export { AnalysisPanel } from './AnalysisPanel';
+export { AIChatPanel } from './AIChatPanel';
+export { AIVideoPanel } from './AIVideoPanel';
+export { DownloadPanel } from './DownloadPanel';
+export { MIDIMappingPanel } from './MIDIMappingPanel';
+export { TransitionsPanel } from './TransitionsPanel';
+export { SceneDescriptionPanel } from './SceneDescriptionPanel';

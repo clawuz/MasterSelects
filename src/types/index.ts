@@ -1,0 +1,1000 @@
+// Core types for WebVJ Mixer
+
+import type {
+  VectorAnimationClipSettings,
+  VectorAnimationInputProperty,
+  VectorAnimationProvider,
+  VectorAnimationStateProperty,
+} from './vectorAnimation';
+import type { ColorCorrectionState, RuntimeColorGrade } from './colorCorrection';
+
+export * from './colorCorrection';
+
+export type TimelineSourceType =
+  | 'video'
+  | 'audio'
+  | 'image'
+  | 'text'
+  | 'solid'
+  | 'model'
+  | 'camera'
+  | 'gaussian-avatar'
+  | 'gaussian-splat'
+  | 'splat-effector'
+  | 'math-scene'
+  | VectorAnimationProvider;
+
+export type ModelSequencePlaybackMode = 'clamp' | 'loop';
+
+export interface ModelSequenceFrame {
+  name: string;
+  projectPath?: string;
+  sourcePath?: string;
+  absolutePath?: string;
+  file?: File;
+  modelUrl?: string;
+}
+
+export interface ModelSequenceData {
+  fps: number;
+  frameCount: number;
+  playbackMode?: ModelSequencePlaybackMode;
+  sequenceName?: string;
+  frames: ModelSequenceFrame[];
+}
+
+export interface GaussianSplatSequenceFrame {
+  name: string;
+  projectPath?: string;
+  sourcePath?: string;
+  absolutePath?: string;
+  file?: File;
+  splatUrl?: string;
+  splatCount?: number;
+  fileSize?: number;
+  container?: string;
+  codec?: string;
+}
+
+export interface GaussianSplatBounds {
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
+export interface GaussianSplatSequenceData {
+  fps: number;
+  frameCount: number;
+  playbackMode?: ModelSequencePlaybackMode;
+  sequenceName?: string;
+  sharedBounds?: GaussianSplatBounds;
+  totalSplatCount?: number;
+  minSplatCount?: number;
+  maxSplatCount?: number;
+  totalFileSize?: number;
+  container?: string;
+  codec?: string;
+  frames: GaussianSplatSequenceFrame[];
+}
+
+export interface Layer {
+  id: string;
+  name: string;
+  sourceClipId?: string;
+  visible: boolean;
+  opacity: number;
+  blendMode: BlendMode;
+  source: LayerSource | null;
+  effects: Effect[];
+  colorCorrection?: RuntimeColorGrade;
+  position: { x: number; y: number; z: number };
+  scale: { x: number; y: number; z?: number };
+  rotation: number | { x: number; y: number; z: number };  // Single value (z only) or full 3D rotation
+  is3D?: boolean;  // When true, layer participates in the shared 3D scene
+  wireframe?: boolean;  // Debug: show as wireframe
+  // Mask properties (passed from timeline clip masks for GPU processing)
+  maskFeather?: number;  // Blur radius in pixels (0-50), handled in GPU shader
+  maskFeatherQuality?: number;  // Blur quality: 0=low (9 samples), 1=medium (17), 2=high (25)
+  maskInvert?: boolean;  // Whether to invert the mask, handled in GPU shader
+  maskClipId?: string;  // Clip ID for looking up mask texture (consistent across systems)
+}
+
+export type BlendMode =
+  // Normal
+  | 'normal'
+  | 'dissolve'
+  | 'dancing-dissolve'
+  // Darken
+  | 'darken'
+  | 'multiply'
+  | 'color-burn'
+  | 'classic-color-burn'
+  | 'linear-burn'
+  | 'darker-color'
+  // Lighten
+  | 'add'
+  | 'lighten'
+  | 'screen'
+  | 'color-dodge'
+  | 'classic-color-dodge'
+  | 'linear-dodge'
+  | 'lighter-color'
+  // Contrast
+  | 'overlay'
+  | 'soft-light'
+  | 'hard-light'
+  | 'linear-light'
+  | 'vivid-light'
+  | 'pin-light'
+  | 'hard-mix'
+  // Inversion
+  | 'difference'
+  | 'classic-difference'
+  | 'exclusion'
+  | 'subtract'
+  | 'divide'
+  // Component
+  | 'hue'
+  | 'saturation'
+  | 'color'
+  | 'luminosity'
+  // Stencil
+  | 'stencil-alpha'
+  | 'stencil-luma'
+  | 'silhouette-alpha'
+  | 'silhouette-luma'
+  | 'alpha-add';
+
+export interface LayerSource {
+  type: 'video' | 'image' | 'camera' | 'color' | 'text' | 'solid' | 'model' | 'gaussian-avatar' | 'gaussian-splat';
+  modelUrl?: string;  // Blob URL to 3D model file (OBJ/glTF/GLB)
+  modelFileName?: string;
+  modelSequence?: ModelSequenceData;
+  gaussianSplatSequence?: GaussianSplatSequenceData;
+  threeDEffectorsEnabled?: boolean;  // Whether shared-scene 3D effectors can affect this layer
+  meshType?: import('../stores/mediaStore/types').MeshPrimitiveType;  // Primitive mesh type (cube, sphere, etc.)
+  file?: File;
+  videoElement?: HTMLVideoElement;
+  mediaTime?: number;
+  targetMediaTime?: number;
+  previewPath?: string;
+  proxyFrameIndex?: number;
+  mediaFileId?: string;
+  intrinsicWidth?: number;
+  intrinsicHeight?: number;
+  imageElement?: HTMLImageElement;
+  color?: string;
+  texture?: GPUTexture;
+  // WebCodecs support for hardware-accelerated video decode
+  webCodecsPlayer?:
+    | import('../engine/WebCodecsPlayer').WebCodecsPlayer
+    | import('../services/mediaRuntime/types').RuntimeFrameProvider;
+  videoFrame?: VideoFrame;
+  // Native Helper decoder for ProRes/DNxHD (turbo mode)
+  nativeDecoder?: import('../services/nativeHelper').NativeDecoder;
+  // Path to original file (for native helper to access directly)
+  filePath?: string;
+  // Shared media runtime binding
+  runtimeSourceId?: string;
+  runtimeSessionKey?: string;
+  // Gaussian avatar support
+  gaussianAvatarUrl?: string;
+  gaussianBlendshapes?: Record<string, number>;
+  // Gaussian splat clip support
+  gaussianSplatUrl?: string;
+  gaussianSplatFileName?: string;
+  gaussianSplatFileHash?: string;
+  gaussianSplatRuntimeKey?: string;
+  gaussianSplatSettings?: import('../engine/gaussian/types').GaussianSplatSettings;
+  cameraSettings?: import('../stores/mediaStore/types').SceneCameraSettings;
+  // Nested composition support - pre-rendered layers from nested comp
+  nestedComposition?: NestedCompositionData;
+  // Text clip support
+  textCanvas?: HTMLCanvasElement;
+  textProperties?: TextClipProperties;
+  text3DProperties?: Text3DProperties;
+}
+
+// Data for pre-rendering nested compositions
+export interface NestedCompositionData {
+  compositionId: string;
+  layers: Layer[];  // Layers from the nested composition to be pre-rendered
+  width: number;
+  height: number;
+  currentTime?: number;  // Current time for frame caching
+  sceneClips?: TimelineClip[];
+  sceneTracks?: TimelineTrack[];
+}
+
+// Text clip typography properties
+export interface TextClipProperties {
+  // Content
+  text: string;
+
+  // Typography
+  fontFamily: string;           // e.g., 'Roboto', 'Open Sans'
+  fontSize: number;             // in pixels
+  fontWeight: number;           // 100-900
+  fontStyle: 'normal' | 'italic';
+
+  // Color
+  color: string;                // hex or rgba
+
+  // Alignment
+  textAlign: 'left' | 'center' | 'right';
+  verticalAlign: 'top' | 'middle' | 'bottom';
+
+  // Spacing
+  lineHeight: number;           // multiplier (1.2 = 120%)
+  letterSpacing: number;        // pixels
+
+  // Stroke (outline)
+  strokeEnabled: boolean;
+  strokeColor: string;
+  strokeWidth: number;          // pixels
+
+  // Shadow
+  shadowEnabled: boolean;
+  shadowColor: string;
+  shadowOffsetX: number;        // pixels
+  shadowOffsetY: number;
+  shadowBlur: number;           // pixels
+
+  // Text on Path (bezier curve)
+  pathEnabled: boolean;
+  pathPoints: { x: number; y: number; handleIn: { x: number; y: number }; handleOut: { x: number; y: number } }[];
+}
+
+export interface Text3DProperties {
+  text: string;
+  fontFamily: 'helvetiker' | 'optimer' | 'gentilis';
+  fontWeight: 'regular' | 'bold';
+  size: number;
+  depth: number;
+  color: string;
+  letterSpacing: number;
+  lineHeight: number;
+  textAlign: 'left' | 'center' | 'right';
+  curveSegments: number;
+  bevelEnabled: boolean;
+  bevelThickness: number;
+  bevelSize: number;
+  bevelSegments: number;
+}
+
+// Math Scene clip support
+export interface MathSceneViewport {
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+  showGrid: boolean;
+  showAxes: boolean;
+}
+
+export interface MathSceneStyle {
+  backgroundColor: string;
+  axisColor: string;
+  gridColor: string;
+  labelColor: string;
+}
+
+export interface MathParameterAnimation {
+  enabled: boolean;
+  from: number;
+  to: number;
+  startTime: number;
+  endTime: number;
+  easing: EasingType;
+}
+
+export interface MathParameter {
+  id: string;
+  name: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  animation?: MathParameterAnimation;
+}
+
+export interface MathObjectAnimation {
+  reveal?: {
+    enabled: boolean;
+    startTime: number;
+    endTime: number;
+  };
+}
+
+export interface MathBaseObject {
+  id: string;
+  name: string;
+  visible: boolean;
+  opacity: number;
+  animation?: MathObjectAnimation;
+}
+
+export interface MathFunctionObject extends MathBaseObject {
+  type: 'function';
+  expression: string;
+  domain?: [number, number];
+  samples: number;
+  stroke: string;
+  strokeWidth: number;
+}
+
+export interface MathPointObject extends MathBaseObject {
+  type: 'point';
+  xExpression: string;
+  yExpression: string;
+  radius: number;
+  fill: string;
+  stroke: string;
+  labelVisible: boolean;
+}
+
+export interface MathTangentObject extends MathBaseObject {
+  type: 'tangent';
+  functionId: string;
+  atExpression: string;
+  length: number;
+  stroke: string;
+  strokeWidth: number;
+}
+
+export interface MathLabelObject extends MathBaseObject {
+  type: 'label';
+  text: string;
+  xExpression: string;
+  yExpression: string;
+  fontSize: number;
+  color: string;
+}
+
+export type MathObject =
+  | MathFunctionObject
+  | MathPointObject
+  | MathTangentObject
+  | MathLabelObject;
+
+export interface MathSceneDefinition {
+  version: 1;
+  viewport: MathSceneViewport;
+  style: MathSceneStyle;
+  parameters: MathParameter[];
+  objects: MathObject[];
+}
+
+export interface Effect {
+  id: string;
+  name: string;
+  type: EffectType;
+  enabled: boolean;
+  params: Record<string, number | boolean | string>;
+}
+
+export type EffectType =
+  | 'hue-shift'
+  | 'saturation'
+  | 'brightness'
+  | 'contrast'
+  | 'blur'
+  | 'pixelate'
+  | 'kaleidoscope'
+  | 'mirror'
+  | 'invert'
+  | 'rgb-split'
+  | 'levels'
+  // Audio effects
+  | 'audio-eq'
+  | 'audio-volume';
+
+// Helper to check if an effect type is an audio effect
+export function isAudioEffect(type: EffectType): boolean {
+  return type === 'audio-eq' || type === 'audio-volume';
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  layers: Layer[];
+  outputResolution: { width: number; height: number };
+  fps: number;
+}
+
+export interface MIDIMapping {
+  channel: number;
+  control: number;
+  target: string;
+  min: number;
+  max: number;
+}
+
+export interface EngineStats {
+  fps: number;
+  frameTime: number;
+  gpuMemory: number;
+  // Detailed timing (ms)
+  timing: {
+    rafGap: number;        // Time between rAF callbacks (should be ~16.67ms for 60fps)
+    importTexture: number; // Time to import video textures
+    renderPass: number;    // Time for GPU render passes
+    submit: number;        // Time for GPU queue submit
+    total: number;         // Total render time
+  };
+  // Frame drop stats
+  drops: {
+    count: number;         // Total dropped frames this session
+    lastSecond: number;    // Drops in last second
+    reason: 'none' | 'slow_raf' | 'slow_render' | 'slow_import';
+  };
+  // Current frame info
+  layerCount: number;
+  targetFps: number;
+  // Decoder info
+  decoder: 'WebCodecs' | 'HTMLVideo(VF)' | 'HTMLVideo' | 'HTMLVideo(cached)' | 'HTMLVideo(paused-cache)' | 'HTMLVideo(seeking-cache)' | 'HTMLVideo(scrub-cache)' | 'NativeHelper' | 'ParallelDecode' | 'none';
+  // WebCodecs debug info (only in full mode)
+  webCodecsInfo?: {
+    codec: string;
+    hwAccel: string;
+    decodeQueueSize: number;
+    samplesLoaded: number;
+    sampleIndex: number;
+  };
+  // Audio status
+  audio: {
+    playing: number;       // Number of audio elements currently playing
+    drift: number;         // Max audio drift from expected time in ms
+    status: 'sync' | 'drift' | 'silent' | 'error';
+  };
+  // Playback pipeline debug snapshot
+  playback?: {
+    windowMs: number;
+    pipeline: 'webcodecs' | 'vf' | 'html' | 'native' | 'parallel' | 'none';
+    status: 'ok' | 'warn' | 'bad';
+    frameEvents: number;
+    cadenceFps: number;
+    avgFrameGapMs: number;
+    p95FrameGapMs: number;
+    maxFrameGapMs: number;
+    previewFrames: number;
+    previewUpdates: number;
+    previewRenderFps: number;
+    previewUpdateFps: number;
+    avgPreviewRenderGapMs: number;
+    p95PreviewRenderGapMs: number;
+    maxPreviewRenderGapMs: number;
+    avgPreviewUpdateGapMs: number;
+    p95PreviewUpdateGapMs: number;
+    maxPreviewUpdateGapMs: number;
+    stalePreviewFrames: number;
+    stalePreviewWhileTargetMoved: number;
+    previewFreezeEvents: number;
+    previewFreezeFrames: number;
+    longestPreviewFreezeFrames: number;
+    longestPreviewFreezeMs: number;
+    avgPreviewDriftMs: number;
+    maxPreviewDriftMs: number;
+    stalls: number;
+    seeks: number;
+    advanceSeeks: number;
+    driftCorrections: number;
+    readyStateDrops: number;
+    queuePressureEvents: number;
+    healthAnomalies: number;
+    activeVideos: number;
+    playingVideos: number;
+    seekingVideos: number;
+    warmingUpVideos: number;
+    coldVideos: number;
+    worstReadyState: number;
+    lastAnomalyType?: string;
+    avgDecodeLatencyMs?: number;
+    avgSeekLatencyMs?: number;
+    avgQueueDepth?: number;
+    maxQueueDepth?: number;
+    avgAudioDriftMs?: number;
+    decoderResets?: number;
+    pendingSeekResolves?: number;
+    avgPendingSeekMs?: number;
+    maxPendingSeekMs?: number;
+    collectorHolds?: number;
+    collectorDrops?: number;
+    lastPreviewFreezePath?: string;
+    lastPreviewFreezeClipId?: string;
+    lastPreviewFreezeDurationMs?: number;
+    previewPathCounts?: Record<string, number>;
+    scrubPathCounts?: Record<string, number>;
+  };
+  // Render dispatcher debug snapshot, including non-video visual cadence.
+  renderDispatcher?: {
+    splatSequence?: {
+      targetSceneKey?: string;
+      renderedSceneKey?: string;
+      mode: 'target' | 'held' | 'missing';
+      visualFrameChangesLastSecond: number;
+      backgroundLoads: number;
+    };
+  };
+  // Main-thread frame phase breakdown
+  mainThread?: {
+    windowMs: number;
+    samples: number;
+    liveSamples: number;
+    cachedSamples: number;
+    skippedSamples: number;
+    avgTotalMs: number;
+    p95TotalMs: number;
+    maxTotalMs: number;
+    avgStatsMs: number;
+    avgBuildMs: number;
+    avgRenderMs: number;
+    avgSyncVideoMs: number;
+    avgSyncAudioMs: number;
+    avgCacheMs: number;
+    maxBuildMs: number;
+    maxRenderMs: number;
+    maxSyncVideoMs: number;
+    maxSyncAudioMs: number;
+    maxCacheMs: number;
+  };
+  // Idle mode - engine pauses rendering when nothing changes
+  isIdle: boolean;
+}
+
+// Timeline types
+
+// Transition stored on a clip (referencing transition module types)
+export interface TimelineTransition {
+  id: string;
+  type: string;  // TransitionType from transitions module
+  duration: number;  // seconds
+  linkedClipId: string;  // ID of the other clip in the transition
+}
+
+export interface ClipTransform {
+  opacity: number;          // 0-1
+  blendMode: BlendMode;
+  position: { x: number; y: number; z: number };
+  scale: { all?: number; x: number; y: number; z?: number };
+  rotation: { x: number; y: number; z: number };  // degrees
+}
+
+// Transcript word/chunk for speech-to-text
+export interface TranscriptWord {
+  id: string;
+  text: string;
+  start: number;        // Start time in seconds (relative to clip source)
+  end: number;          // End time in seconds (relative to clip source)
+  confidence?: number;  // 0-1 confidence score
+  speaker?: string;     // Speaker label if diarization available
+}
+
+// Scene description types for AI video analysis
+export type SceneDescriptionStatus = 'none' | 'describing' | 'ready' | 'error';
+
+export interface SceneSegment {
+  id: string;
+  text: string;
+  start: number;        // Start time in seconds (relative to clip source)
+  end: number;          // End time in seconds (relative to clip source)
+}
+
+// Transcript status
+export type TranscriptStatus = 'none' | 'transcribing' | 'ready' | 'error';
+
+// Analysis types for focus/motion/face detection
+export type AnalysisStatus = 'none' | 'analyzing' | 'ready' | 'error';
+
+export interface FrameAnalysisData {
+  timestamp: number;      // Time in seconds (relative to clip source)
+  motion: number;         // 0-1 overall motion score (legacy, kept for compatibility)
+  globalMotion: number;   // 0-1 camera/scene motion (whole frame changes uniformly)
+  localMotion: number;    // 0-1 object motion (localized changes within frame)
+  focus: number;          // 0-1 focus/sharpness score
+  brightness: number;     // 0-1 brightness/luminance score
+  faceCount: number;      // Number of faces detected
+  isSceneCut?: boolean;   // True if this frame is likely a scene cut
+}
+
+export interface ClipAnalysis {
+  frames: FrameAnalysisData[];
+  sampleInterval: number; // Milliseconds between samples
+}
+
+/** Segment-based thumbnails for nested composition clips */
+export interface ClipSegment {
+  clipId: string;       // ID of the source clip in the nested composition
+  clipName: string;     // Name for debugging
+  startNorm: number;    // Normalized start position (0-1)
+  endNorm: number;      // Normalized end position (0-1)
+  thumbnails: string[]; // Thumbnails from this clip's content
+}
+
+export interface TimelineClip {
+  id: string;
+  trackId: string;
+  name: string;
+  file: File;
+  startTime: number;      // Start position on timeline (seconds)
+  duration: number;       // Clip duration (seconds)
+  inPoint: number;        // Trim in point within source (seconds)
+  outPoint: number;       // Trim out point within source (seconds)
+  source: {
+    type: TimelineSourceType;
+    modelUrl?: string;  // Blob URL to 3D model file
+    modelFileName?: string;
+    modelSequence?: ModelSequenceData;
+    gaussianSplatSequence?: GaussianSplatSequenceData;
+    threeDEffectorsEnabled?: boolean;  // Whether shared-scene 3D effectors can affect this clip
+    meshType?: import('../stores/mediaStore/types').MeshPrimitiveType;  // Primitive mesh type
+    text3DProperties?: Text3DProperties;
+    cameraSettings?: import('../stores/mediaStore/types').SceneCameraSettings;  // Shared-scene camera settings
+    splatEffectorSettings?: import('./splatEffector').SplatEffectorSettings;  // Shared-scene splat effector settings
+    gaussianAvatarUrl?: string;  // URL to gaussian splat avatar file
+    gaussianBlendshapes?: Record<string, number>;  // ARKit blendshape weights
+    gaussianSplatUrl?: string;  // URL to gaussian splat scene file
+    gaussianSplatFileName?: string;  // Original filename for format detection after blob URL conversion
+    gaussianSplatFileHash?: string;  // Stable content hash for cached/exported splat runtimes
+    gaussianSplatRuntimeKey?: string;  // Stable per-frame cache key for splat sequences
+    gaussianSplatSettings?: import('../engine/gaussian/types').GaussianSplatSettings;  // Gaussian splat render settings
+    videoElement?: HTMLVideoElement;
+    audioElement?: HTMLAudioElement;
+    imageElement?: HTMLImageElement;
+    webCodecsPlayer?: import('../engine/WebCodecsPlayer').WebCodecsPlayer;
+    nativeDecoder?: import('../services/nativeHelper/NativeDecoder').NativeDecoder;
+    naturalDuration?: number;
+    mediaFileId?: string;  // Reference to MediaFile for proxy lookup
+    file?: File;
+    textCanvas?: HTMLCanvasElement;  // Pre-rendered text/solid canvas for text and solid clips
+    vectorAnimationSettings?: VectorAnimationClipSettings;
+    filePath?: string;  // Path to original file (for native helper to access directly)
+    runtimeSourceId?: string;
+    runtimeSessionKey?: string;
+  } | null;
+  mathScene?: MathSceneDefinition;
+  thumbnails?: string[];  // Array of data URLs for filmstrip preview
+  mediaFileId?: string;   // Reference to MediaFile for audio/proxy lookup (top-level for YouTube downloads)
+  linkedClipId?: string;  // ID of linked clip (e.g., audio linked to video)
+  linkedGroupId?: string; // ID of multicam group (clips synced together)
+  parentClipId?: string;  // ID of parent clip for transform inheritance (like AE parenting)
+  waveform?: number[];    // Array of normalized amplitude values (0-1) for audio waveform
+  waveformGenerating?: boolean;  // True while waveform is being generated
+  waveformProgress?: number;     // 0-100 progress of waveform generation
+  transform: ClipTransform;  // Visual transform properties
+  effects: Effect[];      // Effects applied to this clip
+  colorCorrection?: ColorCorrectionState;  // Professional node/list color correction state
+  isLoading?: boolean;    // True while media is being loaded
+  needsReload?: boolean;  // True if file handle needs re-authorization after page refresh
+  reversed?: boolean;     // True if clip plays in reverse
+  speed?: number;         // Playback speed (default 1.0, 0.5 = half speed, -1.0 = reverse)
+  preservesPitch?: boolean;  // Keep pitch when speed changes (default true)
+  // Nested composition support
+  isComposition?: boolean;  // True if this clip is a nested composition
+  compositionId?: string;   // ID of the nested composition
+  nestedClips?: TimelineClip[];  // Loaded clips from the nested composition
+  nestedTracks?: TimelineTrack[];  // Tracks from the nested composition
+  nestedContentHash?: string;  // Hash to detect changes in nested composition (for thumbnail updates)
+  nestedClipBoundaries?: number[];  // Normalized (0-1) positions where nested clips start/end (for visual markers)
+  clipSegments?: ClipSegment[];  // Segment-based thumbnails for nested compositions
+  // Nested composition audio mixdown
+  mixdownAudio?: HTMLAudioElement;  // Audio element for playing nested comp audio
+  mixdownWaveform?: number[];  // Waveform of the nested comp audio mixdown
+  mixdownBuffer?: AudioBuffer;  // Raw audio buffer for export
+  mixdownGenerating?: boolean;  // True while mixdown is being generated
+  hasMixdownAudio?: boolean;  // True if nested comp has audio
+  // Mask support
+  masks?: ClipMask[];     // Array of masks applied to this clip
+  // Transcript support
+  transcript?: TranscriptWord[];  // Speech-to-text transcript
+  transcriptStatus?: TranscriptStatus;  // Transcription status
+  transcriptProgress?: number;  // 0-100 progress
+  transcriptMessage?: string;  // Status message during transcription
+  // Analysis support (focus/motion/face)
+  analysis?: ClipAnalysis;
+  analysisStatus?: AnalysisStatus;
+  analysisProgress?: number;  // 0-100 progress
+  // AI scene description support
+  sceneDescriptions?: SceneSegment[];
+  sceneDescriptionStatus?: SceneDescriptionStatus;
+  sceneDescriptionProgress?: number;  // 0-100 progress
+  sceneDescriptionMessage?: string;   // Status message during description
+  // Text clip support
+  textProperties?: TextClipProperties;
+  text3DProperties?: Text3DProperties;
+  // Solid clip support
+  solidColor?: string;
+  // YouTube download support
+  isPendingDownload?: boolean;  // True if clip is being downloaded
+  downloadProgress?: number;    // 0-100 download progress
+  downloadSpeed?: string;       // e.g. "5.23MiB/s"
+  downloadError?: string;       // Error message if download failed
+  youtubeVideoId?: string;      // YouTube video ID for pending downloads
+  youtubeThumbnail?: string;    // Thumbnail URL for pending display
+  // Transition support
+  transitionIn?: TimelineTransition;   // Transition from previous clip
+  transitionOut?: TimelineTransition;  // Transition to next clip
+  // 3D layer support (AE-style per-layer toggle)
+  is3D?: boolean;
+  wireframe?: boolean;  // Debug: show 3D model as wireframe
+  meshType?: import('../stores/mediaStore/types').MeshPrimitiveType;  // Primitive mesh geometry type
+}
+
+export interface TimelineTrack {
+  id: string;
+  name: string;
+  type: 'video' | 'audio';
+  height: number;
+  muted: boolean;
+  visible: boolean;
+  solo: boolean;
+  parentTrackId?: string;  // ID of parent track for layer parenting (like AE parenting)
+}
+
+export interface TimelineState {
+  tracks: TimelineTrack[];
+  clips: TimelineClip[];
+  playheadPosition: number;  // Current time in seconds
+  duration: number;          // Total timeline duration
+  zoom: number;              // Pixels per second
+  scrollX: number;           // Horizontal scroll position
+  isPlaying: boolean;
+  selectedClipId: string | null;
+}
+
+// Serializable clip data for storage (without DOM elements)
+export interface SerializableClip {
+  id: string;
+  trackId: string;
+  name: string;
+  mediaFileId: string;       // Reference to MediaFile in mediaStore
+  startTime: number;
+  duration: number;
+  inPoint: number;
+  outPoint: number;
+  sourceType: TimelineSourceType;
+  naturalDuration?: number;
+  thumbnails?: string[];
+  linkedClipId?: string;
+  linkedGroupId?: string;  // Multicam group ID
+  waveform?: number[];
+  transform: ClipTransform;
+  effects: Effect[];         // Effects applied to this clip
+  colorCorrection?: ColorCorrectionState;
+  keyframes?: Keyframe[];    // Animation keyframes for this clip
+  // Nested composition support
+  isComposition?: boolean;
+  compositionId?: string;
+  // Mask support
+  masks?: ClipMask[];        // Masks applied to this clip
+  // Transcript data
+  transcript?: TranscriptWord[];
+  transcriptStatus?: TranscriptStatus;
+  // Analysis data
+  analysis?: ClipAnalysis;
+  analysisStatus?: AnalysisStatus;
+  // AI scene description data
+  sceneDescriptions?: SceneSegment[];
+  sceneDescriptionStatus?: SceneDescriptionStatus;
+  // Playback
+  reversed?: boolean;
+  speed?: number;         // Playback speed (default 1.0)
+  preservesPitch?: boolean;  // Keep pitch when speed changes (default true)
+  // Text clip support
+  textProperties?: TextClipProperties;
+  text3DProperties?: Text3DProperties;
+  // Solid clip support
+  solidColor?: string;
+  vectorAnimationSettings?: VectorAnimationClipSettings;
+  mathScene?: MathSceneDefinition;
+  // Transition support
+  transitionIn?: TimelineTransition;
+  transitionOut?: TimelineTransition;
+  // 3D layer support
+  is3D?: boolean;
+  modelSequence?: ModelSequenceData;
+  gaussianSplatSequence?: GaussianSplatSequenceData;
+  threeDEffectorsEnabled?: boolean;
+  meshType?: import('../stores/mediaStore/types').MeshPrimitiveType;
+  cameraSettings?: import('../stores/mediaStore/types').SceneCameraSettings;
+  splatEffectorSettings?: import('./splatEffector').SplatEffectorSettings;
+  // Gaussian avatar blendshape state
+  gaussianBlendshapes?: Record<string, number>;
+  // Gaussian splat settings
+  gaussianSplatSettings?: import('../engine/gaussian/types').GaussianSplatSettings;
+}
+
+// Serializable timeline marker (for project save/load)
+export interface SerializableMarker {
+  id: string;
+  time: number;
+  label: string;
+  color: string;
+  stopPlayback?: boolean;
+  midiBindings?: import('./midi').MarkerMIDIBinding[];
+}
+
+// Serializable timeline data for composition storage
+export interface CompositionTimelineData {
+  tracks: TimelineTrack[];
+  clips: SerializableClip[];
+  playheadPosition: number;
+  duration: number;
+  durationLocked?: boolean;  // When true, duration won't auto-update based on clips
+  zoom: number;
+  scrollX: number;
+  inPoint: number | null;
+  outPoint: number | null;
+  loopPlayback: boolean;
+  markers?: SerializableMarker[];  // Timeline markers
+}
+
+// Keyframe animation types
+export type EasingType = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'bezier';
+export type RotationInterpolationMode = 'shortest' | 'continuous';
+
+// Bezier control handle for custom curves
+export interface BezierHandle {
+  x: number;  // Time offset from keyframe (seconds, negative for in-handle)
+  y: number;  // Value offset from keyframe value
+}
+
+// Transform properties that can be animated
+export type TransformProperty =
+  | 'opacity'
+  | 'speed'
+  | 'position.x' | 'position.y' | 'position.z'
+  | 'scale.all' | 'scale.x' | 'scale.y' | 'scale.z'
+  | 'rotation.x' | 'rotation.y' | 'rotation.z';
+
+export type CameraPropertyName = 'fov' | 'near' | 'far' | 'resolutionWidth' | 'resolutionHeight';
+export type CameraProperty = `camera.${CameraPropertyName}`;
+
+// Effect property format: effect.{effectId}.{paramName}
+// Example: effect.effect_123456.shift, effect.effect_123456.amount
+export type EffectProperty = `effect.${string}.${string}`;
+
+// Color correction property format: color.{versionId}.{nodeId}.{paramName}
+export type ColorProperty = `color.${string}.${string}.${string}`;
+
+// Mask property formats:
+// - mask.{maskId}.path stores the whole bezier path as one keyframe value
+// - mask.{maskId}.position.x/y and edge values remain numeric keyframes
+export type MaskPathProperty = `mask.${string}.path`;
+export type MaskNumericPropertyName = 'position.x' | 'position.y' | 'feather' | 'featherQuality';
+export type MaskNumericProperty = `mask.${string}.${MaskNumericPropertyName}`;
+export type MaskProperty = MaskPathProperty | MaskNumericProperty;
+
+// Combined animatable property type
+export type AnimatableProperty = TransformProperty | CameraProperty | EffectProperty | ColorProperty | MaskProperty | VectorAnimationInputProperty | VectorAnimationStateProperty;
+
+export function isCameraProperty(property: string): property is CameraProperty {
+  return /^camera\.(fov|near|far|resolutionWidth|resolutionHeight)$/.test(property);
+}
+
+export function parseCameraProperty(property: string): CameraPropertyName | null {
+  return isCameraProperty(property) ? property.slice('camera.'.length) as CameraPropertyName : null;
+}
+
+// Helper to check if a property is an effect property
+export function isEffectProperty(property: string): property is EffectProperty {
+  return property.startsWith('effect.');
+}
+
+// Helper to parse effect property into parts
+export function parseEffectProperty(property: EffectProperty): { effectId: string; paramName: string } | null {
+  const parts = property.split('.');
+  if (parts.length === 3 && parts[0] === 'effect') {
+    return { effectId: parts[1], paramName: parts[2] };
+  }
+  return null;
+}
+
+// Helper to create effect property string
+export function createEffectProperty(effectId: string, paramName: string): EffectProperty {
+  return `effect.${effectId}.${paramName}` as EffectProperty;
+}
+
+export function isColorProperty(property: string): property is ColorProperty {
+  return property.startsWith('color.');
+}
+
+export function createMaskPathProperty(maskId: string): MaskPathProperty {
+  return `mask.${maskId}.path` as MaskPathProperty;
+}
+
+export function createMaskNumericProperty(maskId: string, property: MaskNumericPropertyName): MaskNumericProperty {
+  return `mask.${maskId}.${property}` as MaskNumericProperty;
+}
+
+export function isMaskPathProperty(property: string): property is MaskPathProperty {
+  return /^mask\.[^.]+\.path$/.test(property);
+}
+
+export function isMaskNumericProperty(property: string): property is MaskNumericProperty {
+  return /^mask\.[^.]+\.(position\.(x|y)|feather|featherQuality)$/.test(property);
+}
+
+export function parseMaskProperty(property: string): { maskId: string; property: 'path' | MaskNumericPropertyName } | null {
+  const match = /^mask\.([^.]+)\.(.+)$/.exec(property);
+  if (!match) return null;
+
+  const [, maskId, maskProperty] = match;
+  if (
+    maskProperty === 'path' ||
+    maskProperty === 'position.x' ||
+    maskProperty === 'position.y' ||
+    maskProperty === 'feather' ||
+    maskProperty === 'featherQuality'
+  ) {
+    return { maskId, property: maskProperty };
+  }
+  return null;
+}
+
+// Mask types for After Effects-style clip masking
+export type MaskVertexHandleMode = 'none' | 'mirrored' | 'split';
+
+export interface MaskVertex {
+  id: string;
+  x: number;              // Position relative to clip (0-1 normalized)
+  y: number;
+  handleIn: { x: number; y: number };   // Bezier control handle (relative to vertex)
+  handleOut: { x: number; y: number };  // Bezier control handle (relative to vertex)
+  handleMode?: MaskVertexHandleMode;     // Corner, linked bezier handles, or split handles
+}
+
+export type MaskMode = 'add' | 'subtract' | 'intersect';
+
+export interface ClipMask {
+  id: string;
+  name: string;
+  vertices: MaskVertex[];
+  closed: boolean;        // Is the path closed
+  opacity: number;        // 0-1
+  feather: number;        // Blur amount in pixels
+  featherQuality: number; // 0=low (fast), 1=medium, 2=high (smooth)
+  inverted: boolean;
+  mode: MaskMode;
+  expanded: boolean;      // UI state - expanded in properties panel
+  position: { x: number; y: number };  // Offset in normalized coords (0-1)
+  enabled: boolean;       // Whether the mask affects rendering
+  visible: boolean;       // Toggle outline visibility
+}
+
+export interface MaskPathKeyframeValue {
+  vertices: MaskVertex[];
+  closed: boolean;
+}
+
+export interface Keyframe {
+  id: string;
+  clipId: string;
+  time: number;           // Time relative to clip start (seconds)
+  property: AnimatableProperty;
+  value: number;
+  pathValue?: MaskPathKeyframeValue; // Used by mask.{id}.path keyframes
+  easing: EasingType;     // Easing for interpolation TO the next keyframe
+  rotationInterpolation?: RotationInterpolationMode; // Rotation path for the segment TO the next keyframe
+  handleIn?: BezierHandle;   // Bezier control point for curve entering this keyframe
+  handleOut?: BezierHandle;  // Bezier control point for curve leaving this keyframe
+}
+
+// Re-export RenderTarget types
+export type {
+  RenderSourceType,
+  RenderSourceActiveComp,
+  RenderSourceComposition,
+  RenderSourceLayer,
+  RenderSourceSlot,
+  RenderSourceProgram,
+  RenderSource,
+  RenderDestinationType,
+  RenderTarget,
+} from './renderTarget';
+
+export type {
+  VectorAnimationClipSettings,
+  VectorAnimationInputProperty,
+  VectorAnimationMetadata,
+  VectorAnimationProvider,
+} from './vectorAnimation';

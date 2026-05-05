@@ -1,0 +1,138 @@
+// Mask texture handling for layer masking
+
+import { Logger } from '../../services/logger';
+
+const log = Logger.create('MaskTextureManager');
+
+export class MaskTextureManager {
+  private device: GPUDevice;
+
+  // Mask textures per layer
+  private maskTextures: Map<string, GPUTexture> = new Map();
+  private maskTextureViews: Map<string, GPUTextureView> = new Map();
+  private maskTextureSizes: Map<string, { width: number; height: number }> = new Map();
+  private lastMaskDebugLog: number | null = null;
+
+  // Fallback mask texture (fully white = no masking)
+  private whiteMaskTexture: GPUTexture | null = null;
+  private whiteMaskView: GPUTextureView | null = null;
+
+  constructor(device: GPUDevice) {
+    this.device = device;
+    this.createWhiteMaskTexture();
+  }
+
+  private createWhiteMaskTexture(): void {
+    this.whiteMaskTexture = this.device.createTexture({
+      size: [1, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+
+    this.device.queue.writeTexture(
+      { texture: this.whiteMaskTexture },
+      new Uint8Array([255, 255, 255, 255]),  // Pure white = fully visible
+      { bytesPerRow: 4 },
+      [1, 1]
+    );
+
+    this.whiteMaskView = this.whiteMaskTexture.createView();
+  }
+
+  // Update mask texture for a layer
+  updateMaskTexture(layerId: string, imageData: ImageData | null): void {
+    // If no imageData, layer will use white fallback (no masking)
+    if (!imageData) {
+      this.removeMaskTexture(layerId);
+      log.debug(`No mask data for layer ${layerId}, using white fallback`);
+      return;
+    }
+
+    let maskTexture = this.maskTextures.get(layerId);
+    const currentSize = this.maskTextureSizes.get(layerId);
+
+    if (!maskTexture || currentSize?.width !== imageData.width || currentSize?.height !== imageData.height) {
+      maskTexture?.destroy();
+
+      maskTexture = this.device.createTexture({
+        size: [imageData.width, imageData.height],
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+
+      this.maskTextures.set(layerId, maskTexture);
+      this.maskTextureViews.set(layerId, maskTexture.createView());
+      this.maskTextureSizes.set(layerId, { width: imageData.width, height: imageData.height });
+    }
+
+    // Upload mask data
+    this.device.queue.writeTexture(
+      { texture: maskTexture },
+      imageData.data,
+      {
+        bytesPerRow: imageData.width * 4,
+        rowsPerImage: imageData.height,
+      },
+      [imageData.width, imageData.height]
+    );
+
+    log.debug(`Uploaded mask texture for layer ${layerId}: ${imageData.width}x${imageData.height}`);
+  }
+
+  // Remove mask texture for a layer
+  removeMaskTexture(layerId: string): void {
+    const texture = this.maskTextures.get(layerId);
+    if (texture) texture.destroy();
+    this.maskTextures.delete(layerId);
+    this.maskTextureViews.delete(layerId);
+    this.maskTextureSizes.delete(layerId);
+  }
+
+  // Check if a layer has a mask texture
+  hasMaskTexture(layerId: string): boolean {
+    return this.maskTextureViews.has(layerId);
+  }
+
+  // Get mask texture view for a layer (returns white fallback if no mask)
+  getMaskTextureView(layerId: string): GPUTextureView | null {
+    return this.maskTextureViews.get(layerId) ?? null;
+  }
+
+  // Get the fallback white mask view
+  getWhiteMaskView(): GPUTextureView {
+    return this.whiteMaskView!;
+  }
+
+  // Get mask info in single lookup (avoids double Map access)
+  getMaskInfo(layerId: string): { hasMask: boolean; view: GPUTextureView } {
+    const view = this.maskTextureViews.get(layerId);
+    return view
+      ? { hasMask: true, view }
+      : { hasMask: false, view: this.whiteMaskView! };
+  }
+
+  // Log mask state for debugging (throttled)
+  logMaskState(layerId: string, hasMask: boolean): void {
+    if (hasMask && (!this.lastMaskDebugLog || Date.now() - this.lastMaskDebugLog > 1000)) {
+      log.debug(`Rendering layer ${layerId} WITH mask`);
+      this.lastMaskDebugLog = Date.now();
+    }
+  }
+
+  // Clear all mask textures
+  clearAll(): void {
+    for (const texture of this.maskTextures.values()) {
+      texture.destroy();
+    }
+    this.maskTextures.clear();
+    this.maskTextureViews.clear();
+    this.maskTextureSizes.clear();
+  }
+
+  destroy(): void {
+    this.clearAll();
+    this.whiteMaskTexture?.destroy();
+    this.whiteMaskTexture = null;
+    this.whiteMaskView = null;
+  }
+}

@@ -1,0 +1,329 @@
+// Global history hook - initializes undo/redo system and keyboard shortcuts
+
+import { useEffect, useRef } from 'react';
+import { useTimelineStore } from '../stores/timeline';
+import { useMediaStore } from '../stores/mediaStore';
+import { useDockStore } from '../stores/dockStore';
+import { useFlashBoardStore } from '../stores/flashboardStore';
+import { useExportStore } from '../stores/exportStore';
+import type {
+  FlashBoard,
+  FlashBoardComposerState,
+  FlashBoardJobState,
+} from '../stores/flashboardStore';
+import { getShortcutRegistry } from '../services/shortcutRegistry';
+import {
+  useHistoryStore,
+  initHistoryStoreRefs,
+  setHistoryCallbacks,
+  captureSnapshot,
+  undo,
+  redo,
+} from '../stores/historyStore';
+import { Logger } from '../services/logger';
+
+const log = Logger.create('History');
+
+// Shallow equality for subscription selectors — prevents callback from firing
+// on unrelated store changes (e.g. playheadPosition updates at 60fps)
+function shallowEqual<T extends Record<string, unknown>>(a: T, b: T): boolean {
+  if (a === b) return true;
+  const keysA = Object.keys(a);
+  if (keysA.length !== Object.keys(b).length) return false;
+  for (const key of keysA) {
+    if (!Object.is(a[key], b[key])) return false;
+  }
+  return true;
+}
+
+function normalizeFlashBoardJobForHistory(job?: FlashBoardJobState) {
+  if (!job || job.status === 'queued' || job.status === 'processing') {
+    return null;
+  }
+
+  return {
+    status: job.status,
+    error: job.status === 'failed' ? job.error ?? null : null,
+  };
+}
+
+function normalizeFlashBoardBoardsForHistory(boards: FlashBoard[]) {
+  return boards.map((board) => ({
+    id: board.id,
+    name: board.name,
+    viewport: board.viewport,
+    nodes: board.nodes.map((node) => ({
+      id: node.id,
+      kind: node.kind,
+      position: node.position,
+      size: node.size,
+      request: node.request ?? null,
+      result: node.result ?? null,
+      job: normalizeFlashBoardJobForHistory(node.job),
+    })),
+  }));
+}
+
+function normalizeFlashBoardComposerForHistory(composer: FlashBoardComposerState) {
+  return {
+    service: composer.service ?? null,
+    providerId: composer.providerId ?? null,
+    version: composer.version ?? null,
+    outputType: composer.outputType ?? null,
+    generateAudio: composer.generateAudio ?? false,
+    multiShots: composer.multiShots ?? false,
+    multiPrompt: composer.multiPrompt ?? [],
+    startMediaFileId: composer.startMediaFileId ?? null,
+    endMediaFileId: composer.endMediaFileId ?? null,
+    referenceMediaFileIds: composer.referenceMediaFileIds ?? [],
+  };
+}
+
+export function useGlobalHistory() {
+  const initialized = useRef(false);
+  const lastCaptureTime = useRef(0);
+  const pendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingLabel = useRef('');
+  const suppressUntil = useRef(0);
+
+  // Initialize store references
+  useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
+
+    // Initialize history store with store references
+    initHistoryStoreRefs({
+      timeline: {
+        getState: useTimelineStore.getState,
+        setState: useTimelineStore.setState,
+      },
+      media: {
+        getState: useMediaStore.getState,
+        setState: useMediaStore.setState,
+      },
+      dock: {
+        getState: useDockStore.getState,
+        setState: useDockStore.setState,
+      },
+      flashboard: {
+        getState: useFlashBoardStore.getState,
+        setState: useFlashBoardStore.setState,
+      },
+      export: {
+        getState: useExportStore.getState,
+        setState: useExportStore.setState,
+      },
+    });
+
+    // Register callbacks so undo/redo can flush pending captures
+    setHistoryCallbacks({
+      flushPendingCapture: () => {
+        if (pendingTimer.current) {
+          clearTimeout(pendingTimer.current);
+          const label = pendingLabel.current;
+          pendingTimer.current = null;
+          pendingLabel.current = '';
+          // Execute the capture immediately so the state isn't lost
+          lastCaptureTime.current = Date.now();
+          captureSnapshot(label || 'pending');
+        }
+      },
+      suppressCaptures: () => {
+        suppressUntil.current = Date.now() + 250;
+      },
+    });
+
+    // Capture initial state
+    captureSnapshot('initial');
+
+    log.info('Undo/redo system initialized');
+  }, []);
+
+  // Subscribe to store changes and capture snapshots
+  useEffect(() => {
+    // Debounced capture — stores timer ID and label so undo/redo can flush it
+    const debouncedCapture = (label: string) => {
+      if (pendingTimer.current) clearTimeout(pendingTimer.current);
+      pendingLabel.current = label;
+      pendingTimer.current = setTimeout(() => {
+        pendingTimer.current = null;
+        pendingLabel.current = '';
+
+        // Suppress captures shortly after undo/redo to prevent cascade re-captures
+        if (Date.now() < suppressUntil.current) return;
+
+        // Don't capture during undo/redo application
+        if (useHistoryStore.getState().isApplying) return;
+
+        const now = Date.now();
+        // Minimum 100ms between captures
+        if (now - lastCaptureTime.current < 100) return;
+        lastCaptureTime.current = now;
+        captureSnapshot(label);
+      }, 150);
+    };
+
+    // Subscribe to timeline changes (clips, tracks, keyframes, markers)
+    // Using shallowEqual so callback only fires when these specific properties change,
+    // not on every store update (playheadPosition, isPlaying, etc.)
+    const unsubTimeline = useTimelineStore.subscribe(
+      (state) => ({
+        clips: state.clips,
+        tracks: state.tracks,
+        clipKeyframes: state.clipKeyframes,
+        markers: state.markers,
+      }),
+      (curr, prev) => {
+        if (useHistoryStore.getState().isApplying) return;
+
+        // Skip captures during mask dragging — vertex updates fire at 60fps
+        // and would cause expensive deep-clone snapshots every 150ms
+        if (useTimelineStore.getState().maskDragging) return;
+
+        if (curr.clips !== prev.clips) {
+          if (curr.clips.length !== prev.clips.length) {
+            debouncedCapture(curr.clips.length > prev.clips.length ? 'Add clip' : 'Remove clip');
+          } else {
+            debouncedCapture('Modify clip');
+          }
+        } else if (curr.tracks !== prev.tracks) {
+          debouncedCapture('Modify track');
+        } else if (curr.clipKeyframes !== prev.clipKeyframes) {
+          debouncedCapture('Modify keyframes');
+        } else if (curr.markers !== prev.markers) {
+          debouncedCapture('Modify markers');
+        }
+      },
+      { equalityFn: shallowEqual, fireImmediately: false }
+    );
+
+    // Subscribe to media changes
+    const unsubMedia = useMediaStore.subscribe(
+      (state) => ({
+        files: state.files,
+        compositions: state.compositions,
+        folders: state.folders,
+        textItems: state.textItems,
+        solidItems: state.solidItems,
+      }),
+      (curr, prev) => {
+        if (useHistoryStore.getState().isApplying) return;
+
+        if (curr.files !== prev.files) {
+          debouncedCapture(curr.files.length > prev.files.length ? 'Import file' : 'Remove file');
+        } else if (curr.compositions !== prev.compositions) {
+          debouncedCapture('Modify composition');
+        } else if (curr.folders !== prev.folders) {
+          debouncedCapture('Modify folder');
+        } else if (curr.textItems !== prev.textItems) {
+          debouncedCapture('Modify text items');
+        } else if (curr.solidItems !== prev.solidItems) {
+          debouncedCapture('Modify solid items');
+        }
+      },
+      { equalityFn: shallowEqual, fireImmediately: false }
+    );
+
+    // Subscribe to dock changes
+    const unsubDock = useDockStore.subscribe(
+      (state) => state.layout,
+      (curr, prev) => {
+        if (useHistoryStore.getState().isApplying) return;
+        if (curr !== prev) {
+          debouncedCapture('Change layout');
+        }
+      },
+      { fireImmediately: false }
+    );
+
+    const unsubFlashBoard = useFlashBoardStore.subscribe(
+      (state) => ({
+        activeBoardId: state.activeBoardId,
+        boardsSignature: JSON.stringify(normalizeFlashBoardBoardsForHistory(state.boards)),
+        composerSignature: JSON.stringify(normalizeFlashBoardComposerForHistory(state.composer)),
+      }),
+      (curr, prev) => {
+        if (useHistoryStore.getState().isApplying) return;
+
+        if (curr.activeBoardId !== prev.activeBoardId) {
+          debouncedCapture('Switch board');
+        } else if (curr.composerSignature !== prev.composerSignature) {
+          debouncedCapture('Modify composer');
+        } else if (curr.boardsSignature !== prev.boardsSignature) {
+          debouncedCapture('Modify board');
+        }
+      },
+      { equalityFn: shallowEqual, fireImmediately: false }
+    );
+
+    const unsubExport = useExportStore.subscribe(
+      (state) => ({
+        settings: state.settings,
+        presets: state.presets,
+        selectedPresetId: state.selectedPresetId,
+      }),
+      (curr, prev) => {
+        if (useHistoryStore.getState().isApplying) return;
+
+        if (curr.presets !== prev.presets) {
+          debouncedCapture('Modify export presets');
+        } else if (curr.selectedPresetId !== prev.selectedPresetId) {
+          debouncedCapture('Select export preset');
+        } else if (curr.settings !== prev.settings) {
+          debouncedCapture('Modify export settings');
+        }
+      },
+      { equalityFn: shallowEqual, fireImmediately: false }
+    );
+
+    return () => {
+      if (pendingTimer.current) {
+        clearTimeout(pendingTimer.current);
+        pendingTimer.current = null;
+      }
+      unsubTimeline();
+      unsubMedia();
+      unsubDock();
+      unsubFlashBoard();
+      unsubExport();
+    };
+  }, []);
+
+  // Global keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const registry = getShortcutRegistry();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        (e.target as HTMLElement)?.isContentEditable
+      ) {
+        return;
+      }
+
+      if (registry.matches('history.undo', e)) {
+        e.preventDefault();
+        undo();
+        return;
+      }
+
+      if (registry.matches('history.redo', e)) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  return {
+    undo,
+    redo,
+    canUndo: useHistoryStore((state) => state.undoStack.length > 0),
+    canRedo: useHistoryStore((state) => state.redoStack.length > 0),
+  };
+}

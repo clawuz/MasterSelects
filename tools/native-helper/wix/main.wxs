@@ -1,0 +1,72 @@
+﻿<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+    <Package Name="MasterSelects Helper" UpgradeCode="B8F3C4A1-2D7E-4F9B-A6C8-1E5D9F0B3A72" Manufacturer="MasterSelects" Language="1033" Codepage="1252" Version="$(var.Version)" InstallerVersion="450" Scope="perUser">
+
+        <SummaryInformation Keywords="Installer" Description="MasterSelects Native Helper" Manufacturer="MasterSelects" />
+
+        <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+        <MediaTemplate EmbedCab="yes" />
+
+        <Feature Id="MainApp" Title="MasterSelects Helper" Description="Core application" Level="1" Display="expand" AllowAbsent="no">
+            <ComponentRef Id="MainExecutable" />
+
+            <Feature Id="ShortcutsFeature" Title="Shortcuts" Description="Start Menu and Desktop shortcuts" Level="1">
+                <ComponentRef Id="StartMenuShortcut" />
+                <ComponentRef Id="DesktopShortcut" />
+            </Feature>
+        </Feature>
+
+        <ui:WixUI Id="WixUI_FeatureTree" />
+        <WixVariable Id="WixUILicenseRtf" Value="wix\License.rtf" />
+
+        <Property Id="ARPHELPLINK" Value="https://masterselects.app" />
+
+        <!-- Launch after install checkbox (default: checked) -->
+        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch MasterSelects Helper" />
+        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+
+        <CustomAction Id="LaunchApplication"
+            ExeCommand=""
+            FileRef="masterselects_helper_exe"
+            Impersonate="yes"
+            Return="asyncNoWait" />
+
+        <InstallExecuteSequence>
+            <Custom Action="LaunchApplication" After="InstallFinalize" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1" />
+        </InstallExecuteSequence>
+
+    </Package>
+
+    <Fragment>
+            <StandardDirectory Id="LocalAppDataFolder">
+                <Directory Id="INSTALLDIR" Name="MasterSelects Helper" />
+            </StandardDirectory>
+            <StandardDirectory Id="ProgramMenuFolder">
+                <Directory Id="ApplicationProgramsFolder" Name="MasterSelects Helper" />
+            </StandardDirectory>
+            <StandardDirectory Id="DesktopFolder" />
+        </Fragment>
+
+    <Fragment>
+        <Component Id="MainExecutable" Directory="INSTALLDIR" Guid="A1B2C3D4-1111-4000-8000-000000000001">
+            <File Id="masterselects_helper_exe" Name="masterselects-helper.exe" Source="target\release\masterselects-helper.exe" />
+            <RegistryValue Root="HKCU" Key="Software\MasterSelects\Helper" Name="ExePath" Type="string" Value="[INSTALLDIR]masterselects-helper.exe" KeyPath="yes" />
+            <RemoveFolder Id="CleanInstallDir" Directory="INSTALLDIR" On="uninstall" />
+        </Component>
+    </Fragment>
+
+    <Fragment>
+        <Component Id="StartMenuShortcut" Directory="ApplicationProgramsFolder" Guid="A1B2C3D4-4444-4000-8000-000000000001">
+            <Shortcut Id="StartMenuLink" Name="MasterSelects Helper" Description="Video codec acceleration for MasterSelects" Target="[INSTALLDIR]masterselects-helper.exe" WorkingDirectory="INSTALLDIR" />
+            <RemoveFolder Id="CleanShortcutFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
+            <RegistryValue Root="HKCU" Key="Software\MasterSelects\Helper" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+
+        <Component Id="DesktopShortcut" Directory="DesktopFolder" Guid="A1B2C3D4-5555-4000-8000-000000000001">
+            <Shortcut Id="DesktopLink" Name="MasterSelects Helper" Description="Video codec acceleration for MasterSelects" Target="[INSTALLDIR]masterselects-helper.exe" WorkingDirectory="INSTALLDIR" />
+            <RegistryValue Root="HKCU" Key="Software\MasterSelects\Helper" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+    </Fragment>
+
+</Wix>

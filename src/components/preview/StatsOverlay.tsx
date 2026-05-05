@@ -1,0 +1,377 @@
+// Detailed stats overlay component — extracted from Preview.tsx
+
+import { useMemo } from 'react';
+import type { EngineStats } from '../../types';
+import { useEngineStore } from '../../stores/engineStore';
+
+interface StatsOverlayProps {
+  stats: EngineStats;
+  resolution: { width: number; height: number };
+  expanded: boolean;
+  onToggle: () => void;
+}
+
+export function StatsOverlay({ stats, resolution, expanded, onToggle }: StatsOverlayProps) {
+  const gpuInfo = useEngineStore(s => s.gpuInfo);
+  const splatSequence = stats.renderDispatcher?.splatSequence;
+  const splatVisualFps = splatSequence?.visualFrameChangesLastSecond;
+  const fpsColor = stats.fps >= 55 ? '#4f4' : stats.fps >= 30 ? '#ff4' : '#f44';
+  const splatFpsColor =
+    splatVisualFps === undefined
+      ? '#888'
+      : splatVisualFps >= 24
+        ? '#4f4'
+        : splatVisualFps >= 12
+          ? '#ff4'
+          : '#f44';
+  const dropColor = stats.drops.lastSecond > 0 ? '#f44' : '#4f4';
+  const decoderColor = stats.decoder === 'NativeHelper' ? '#4af' : stats.decoder === 'WebCodecs' ? '#4f4' : stats.decoder === 'ParallelDecode' ? '#a4f' : stats.decoder.startsWith('HTMLVideo') ? '#fa4' : '#888';
+  const playbackStatusColor = stats.playback?.status === 'bad' ? '#f44' : stats.playback?.status === 'warn' ? '#ff4' : '#4f4';
+  // Render time color: green < 10ms, yellow < 16.67ms (60fps target), red >= 16.67ms
+  const renderTime = stats.timing.total;
+  const renderTimeColor = renderTime < 10 ? '#4f4' : renderTime < 16.67 ? '#ff4' : '#f44';
+
+  // Determine bottleneck
+  const bottleneck = useMemo(() => {
+    const { timing } = stats;
+    if (timing.total < 10) return null;
+    if (timing.importTexture > timing.renderPass && timing.importTexture > timing.submit) {
+      return 'Video Import';
+    }
+    if (timing.renderPass > timing.submit) {
+      return 'GPU Render';
+    }
+    return 'GPU Submit';
+  }, [stats]);
+
+  const playbackBottleneck = useMemo(() => {
+    const playback = stats.playback;
+    if (!playback) return null;
+    if (playback.stalePreviewWhileTargetMoved >= 6) return 'Preview freeze';
+    if ((playback.collectorDrops ?? 0) > 0) return 'Collector gaps';
+    if ((playback.maxPendingSeekMs ?? 0) >= 80) return 'Pending seek';
+    if ((playback.decoderResets ?? 0) >= 3) return 'Decoder resets';
+    if (playback.queuePressureEvents > 10) return 'Queue pressure';
+    return null;
+  }, [stats.playback]);
+
+  const formatSceneFrame = (sceneKey: string | undefined): string => {
+    if (!sceneKey) return '-';
+    const match = sceneKey.match(/_(\d{6})_frame/);
+    if (match?.[1]) return match[1];
+    return sceneKey.split(/[\\/]/).pop() ?? sceneKey;
+  };
+
+  if (!expanded) {
+    return (
+      <div
+        className="preview-stats preview-stats-compact"
+        onClick={onToggle}
+        title="Click for detailed stats"
+      >
+        {!stats.isIdle && (
+          <>
+            <span style={{ color: fpsColor, fontWeight: 'bold' }}>{stats.fps}</span>
+            <span style={{ opacity: 0.7 }}> FPS</span>
+          </>
+        )}
+        {stats.isIdle && (
+          <span style={{ color: '#888', fontWeight: 'bold' }}>IDLE</span>
+        )}
+        {!stats.isIdle && renderTime > 0 && (
+          <span style={{ color: renderTimeColor, marginLeft: 6, fontSize: 10 }}>
+            {renderTime.toFixed(1)}ms
+          </span>
+        )}
+        {stats.isIdle && (
+          <span style={{ color: '#888', marginLeft: 6, fontSize: 9 }}>[IDLE]</span>
+        )}
+        {stats.decoder !== 'none' && !stats.isIdle && (
+          <span style={{ color: decoderColor, marginLeft: 6, fontSize: 9 }}>[{stats.decoder === 'WebCodecs' ? 'WC' : stats.decoder === 'HTMLVideo(VF)' ? 'VF' : stats.decoder === 'NativeHelper' ? 'NH' : stats.decoder === 'ParallelDecode' ? 'PD' : 'HTML'}]</span>
+        )}
+        {splatSequence && !stats.isIdle && (
+          <span
+            style={{ color: splatFpsColor, marginLeft: 6, fontSize: 10, fontWeight: 'bold' }}
+            title={`Splat visible frame updates. Mode: ${splatSequence.mode}`}
+          >
+            Splat {splatVisualFps} FPS
+          </span>
+        )}
+        {stats.drops.lastSecond > 0 && (
+          <span style={{ color: '#f44', marginLeft: 6 }}>▼{stats.drops.lastSecond}</span>
+        )}
+        {stats.audio?.status && stats.audio.status !== 'silent' && (
+          <span style={{
+            marginLeft: 6,
+            color: stats.audio.status === 'sync' ? '#4f4'
+              : stats.audio.status === 'drift' ? '#ff4'
+              : '#f44'
+          }}>
+            🔊{stats.audio.status === 'drift' ? `(${stats.audio.drift}ms)` : ''}
+          </span>
+        )}
+        <span style={{ opacity: 0.5, marginLeft: 8 }}>
+          {resolution.width}×{resolution.height}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="preview-stats preview-stats-expanded" onClick={onToggle}>
+      <div className="stats-header">
+        <span style={{ color: fpsColor, fontWeight: 'bold', fontSize: 18 }}>{stats.fps}</span>
+        <span style={{ opacity: 0.7 }}> / {stats.targetFps} FPS</span>
+        {splatSequence && (
+          <span style={{ color: splatFpsColor, marginLeft: 8, fontSize: 12, fontWeight: 'bold' }}>
+            Splat {splatVisualFps} FPS
+          </span>
+        )}
+        {stats.isIdle && (
+          <span style={{ color: '#888', marginLeft: 8, fontSize: 11 }}>[IDLE]</span>
+        )}
+        <span style={{ opacity: 0.5, marginLeft: 8, fontSize: 11 }}>
+          {resolution.width}×{resolution.height}
+        </span>
+      </div>
+
+      <div className="stats-section">
+        <div className="stats-row">
+          <span>Frame Gap</span>
+          <span style={{ color: stats.timing.rafGap > 20 ? '#ff4' : '#aaa' }}>
+            {stats.timing.rafGap.toFixed(1)}ms
+          </span>
+        </div>
+        <div className="stats-row">
+          <span>Render Total</span>
+          <span style={{ color: stats.timing.total > 12 ? '#ff4' : '#aaa' }}>
+            {stats.timing.total.toFixed(2)}ms
+          </span>
+        </div>
+      </div>
+
+      <div className="stats-section">
+        <div className="stats-label">Pipeline Breakdown</div>
+        <div className="stats-bar-container">
+          <div
+            className="stats-bar stats-bar-import"
+            style={{ width: `${Math.min(100, (stats.timing.importTexture / 16.67) * 100)}%` }}
+            title={`Import: ${stats.timing.importTexture.toFixed(2)}ms`}
+          />
+          <div
+            className="stats-bar stats-bar-render"
+            style={{ width: `${Math.min(100, (stats.timing.renderPass / 16.67) * 100)}%` }}
+            title={`Render: ${stats.timing.renderPass.toFixed(2)}ms`}
+          />
+          <div
+            className="stats-bar stats-bar-submit"
+            style={{ width: `${Math.min(100, (stats.timing.submit / 16.67) * 100)}%` }}
+            title={`Submit: ${stats.timing.submit.toFixed(2)}ms`}
+          />
+        </div>
+        <div className="stats-row" style={{ fontSize: 10, opacity: 0.6 }}>
+          <span>Import: {stats.timing.importTexture.toFixed(2)}ms</span>
+          <span>Render: {stats.timing.renderPass.toFixed(2)}ms</span>
+          <span>Submit: {stats.timing.submit.toFixed(2)}ms</span>
+        </div>
+      </div>
+
+      <div className="stats-section">
+        {gpuInfo && (
+          <div className="stats-row">
+            <span>GPU</span>
+            <span style={{ color: '#4af' }} title={gpuInfo.description}>WebGPU ({gpuInfo.vendor})</span>
+          </div>
+        )}
+        <div className="stats-row">
+          <span>Engine</span>
+          <span style={{ color: stats.isIdle ? '#888' : '#4f4' }}>
+            {stats.isIdle ? '● Idle (saving power)' : '● Active'}
+          </span>
+        </div>
+        <div className="stats-row">
+          <span>Layers</span>
+          <span>{stats.layerCount}</span>
+        </div>
+        <div className="stats-row">
+          <span>Decoder</span>
+          <span style={{ color: decoderColor }}>{stats.decoder}</span>
+        </div>
+        <div className="stats-row">
+          <span style={{ color: dropColor }}>Drops (last sec)</span>
+          <span style={{ color: dropColor }}>{stats.drops.lastSecond}</span>
+        </div>
+        <div className="stats-row">
+          <span>Drops (total)</span>
+          <span>{stats.drops.count}</span>
+        </div>
+        {stats.drops.reason !== 'none' && (
+          <div className="stats-row">
+            <span>Last Drop Reason</span>
+            <span style={{ color: '#f44' }}>{stats.drops.reason.replace('_', ' ')}</span>
+          </div>
+        )}
+        {bottleneck && (
+          <div className="stats-row">
+            <span>Bottleneck</span>
+            <span style={{ color: '#ff4' }}>{bottleneck}</span>
+          </div>
+        )}
+        {playbackBottleneck && (
+          <div className="stats-row">
+            <span>Playback Bottleneck</span>
+            <span style={{ color: '#ff4' }}>{playbackBottleneck}</span>
+          </div>
+        )}
+        {splatSequence && (
+          <>
+            <div className="stats-row">
+              <span>Splat Visual FPS</span>
+              <span style={{ color: splatFpsColor }}>{splatVisualFps}</span>
+            </div>
+            <div className="stats-row">
+              <span>Splat Mode</span>
+              <span style={{ color: splatSequence.mode === 'target' ? '#4f4' : splatSequence.mode === 'held' ? '#ff4' : '#f44' }}>
+                {splatSequence.mode}
+              </span>
+            </div>
+            <div className="stats-row">
+              <span>Splat Target/Rendered</span>
+              <span style={{ color: splatSequence.mode === 'target' ? '#aaa' : '#ff4' }}>
+                {formatSceneFrame(splatSequence.targetSceneKey)} / {formatSceneFrame(splatSequence.renderedSceneKey)}
+              </span>
+            </div>
+            <div className="stats-row">
+              <span>Splat Background Loads</span>
+              <span>{splatSequence.backgroundLoads}</span>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* WebCodecs Debug Section (full mode only) */}
+      {stats.webCodecsInfo && (
+        <div className="stats-section">
+          <div className="stats-label">WebCodecs</div>
+          <div className="stats-row">
+            <span>Codec</span>
+            <span style={{ color: '#4f4' }}>{stats.webCodecsInfo.codec}</span>
+          </div>
+          <div className="stats-row">
+            <span>HW Accel</span>
+            <span style={{ color: stats.webCodecsInfo.hwAccel === 'prefer-hardware' ? '#4f4' : '#fa4' }}>
+              {stats.webCodecsInfo.hwAccel}
+            </span>
+          </div>
+          <div className="stats-row">
+            <span>Decode Queue</span>
+            <span style={{ color: stats.webCodecsInfo.decodeQueueSize > 5 ? '#ff4' : '#aaa' }}>
+              {stats.webCodecsInfo.decodeQueueSize}
+            </span>
+          </div>
+          <div className="stats-row">
+            <span>Samples</span>
+            <span>{stats.webCodecsInfo.sampleIndex} / {stats.webCodecsInfo.samplesLoaded}</span>
+          </div>
+        </div>
+      )}
+
+      {stats.playback && (
+        <div className="stats-section">
+          <div className="stats-label">Playback Debug</div>
+          <div className="stats-row">
+            <span>Status</span>
+            <span style={{ color: playbackStatusColor }}>{stats.playback.status}</span>
+          </div>
+          <div className="stats-row">
+            <span>Pipeline</span>
+            <span>{stats.playback.pipeline}</span>
+          </div>
+          {stats.playback.previewFrames > 0 && (
+            <div className="stats-row">
+              <span>Preview Updates</span>
+              <span style={{ color: stats.playback.stalePreviewWhileTargetMoved > 0 ? '#ff4' : '#aaa' }}>
+                {stats.playback.previewUpdates} / {stats.playback.previewFrames}
+              </span>
+            </div>
+          )}
+          {stats.playback.previewFrames > 0 && (
+            <div className="stats-row">
+              <span>Preview Gap</span>
+              <span style={{ color: stats.playback.maxPreviewUpdateGapMs >= 180 ? '#f44' : stats.playback.avgPreviewUpdateGapMs >= 80 ? '#ff4' : '#aaa' }}>
+                avg {stats.playback.avgPreviewUpdateGapMs} / max {stats.playback.maxPreviewUpdateGapMs}ms
+              </span>
+            </div>
+          )}
+          {stats.playback.previewFrames > 0 && (
+            <div className="stats-row">
+              <span>Preview Drift</span>
+              <span style={{ color: stats.playback.maxPreviewDriftMs >= 160 ? '#f44' : stats.playback.avgPreviewDriftMs >= 60 ? '#ff4' : '#aaa' }}>
+                avg {stats.playback.avgPreviewDriftMs} / max {stats.playback.maxPreviewDriftMs}ms
+              </span>
+            </div>
+          )}
+          {stats.playback.decoderResets !== undefined && (
+            <div className="stats-row">
+              <span>Decoder Resets</span>
+              <span style={{ color: (stats.playback.decoderResets ?? 0) >= 3 ? '#ff4' : '#aaa' }}>
+                {stats.playback.decoderResets}
+              </span>
+            </div>
+          )}
+          {stats.playback.maxPendingSeekMs !== undefined && (
+            <div className="stats-row">
+              <span>Pending Seek</span>
+              <span style={{ color: (stats.playback.maxPendingSeekMs ?? 0) >= 80 ? '#ff4' : '#aaa' }}>
+                avg {stats.playback.avgPendingSeekMs ?? 0} / max {stats.playback.maxPendingSeekMs ?? 0}ms
+              </span>
+            </div>
+          )}
+          {stats.playback.collectorHolds !== undefined && (
+            <div className="stats-row">
+              <span>Collector Hold/Drop</span>
+              <span style={{ color: (stats.playback.collectorDrops ?? 0) > 0 ? '#f44' : '#aaa' }}>
+                {stats.playback.collectorHolds ?? 0} / {stats.playback.collectorDrops ?? 0}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Audio Status Section */}
+      {stats.audio && (
+        <div className="stats-section">
+          <div className="stats-label">Audio</div>
+          <div className="stats-row">
+            <span>Status</span>
+            <span style={{
+              color: stats.audio.status === 'sync' ? '#4f4'
+                : stats.audio.status === 'drift' ? '#ff4'
+                : stats.audio.status === 'error' ? '#f44'
+                : '#888'
+            }}>
+              {stats.audio.status === 'sync' ? '● Sync'
+                : stats.audio.status === 'drift' ? '◐ Drift'
+                : stats.audio.status === 'error' ? '✕ Error'
+                : '○ Silent'}
+            </span>
+          </div>
+          {stats.audio.playing > 0 && (
+            <div className="stats-row">
+              <span>Playing</span>
+              <span>{stats.audio.playing} track{stats.audio.playing !== 1 ? 's' : ''}</span>
+            </div>
+          )}
+          {stats.audio.drift > 0 && (
+            <div className="stats-row">
+              <span>Drift</span>
+              <span style={{ color: stats.audio.drift > 100 ? '#f44' : stats.audio.drift > 50 ? '#ff4' : '#aaa' }}>
+                {stats.audio.drift}ms
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

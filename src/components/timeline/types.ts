@@ -1,0 +1,336 @@
+// Timeline-specific types for component props
+
+import type {
+  TimelineClip,
+  TimelineTrack,
+  AnimatableProperty,
+  ClipTransform,
+  BezierHandle,
+  EasingType,
+  RotationInterpolationMode,
+} from '../../types';
+
+// Clip drag state (Premiere-style)
+export interface ClipDragState {
+  clipId: string;
+  originalStartTime: number;
+  originalTrackId: string;
+  grabOffsetX: number;      // Where on the clip we grabbed (in pixels)
+  grabY: number;            // Mouse Y relative to track lanes at grab start (for track-change resistance)
+  currentX: number;         // Current mouse X position
+  currentTrackId: string;
+  snappedTime: number | null;  // Snapped position (if snapping) - used for clip positioning
+  snapIndicatorTime: number | null; // The actual edge time where snap occurs - used for snap line indicator
+  isSnapping: boolean;         // Whether currently snapping to an edge
+  trackChangeGuideTime: number | null; // Guide line at original position when dragging across tracks
+  altKeyPressed: boolean;      // If true, skip linked group movement (independent drag)
+  forcingOverlap: boolean;     // If true, user has pushed through resistance and is forcing overlap
+  dragStartTime: number;       // Timestamp when drag started (for track-change delay)
+  // Multi-select drag support
+  multiSelectTimeDelta?: number;  // Time delta to apply to all selected clips during preview
+  multiSelectClipIds?: string[];  // IDs of clips being moved together (excluding the main dragged clip)
+}
+
+// Clip trim state
+export interface ClipTrimState {
+  clipId: string;
+  edge: 'left' | 'right';
+  originalStartTime: number;
+  originalDuration: number;
+  originalInPoint: number;
+  originalOutPoint: number;
+  startX: number;
+  currentX: number;
+  altKey: boolean;  // If true, don't trim linked clip
+}
+
+// Clip fade state (for fade-in/out handles)
+export interface ClipFadeState {
+  clipId: string;
+  edge: 'left' | 'right';  // left = fade-in, right = fade-out
+  startX: number;
+  currentX: number;
+  clipDuration: number;
+  originalFadeDuration: number;  // Original fade duration when drag started
+}
+
+// In/Out marker drag state
+export interface MarkerDragState {
+  type: 'in' | 'out';
+  startX: number;
+  originalTime: number;
+}
+
+// External file drag preview state
+export interface ExternalDragState {
+  trackId: string;
+  startTime: number;
+  x: number;
+  y: number;
+  audioTrackId?: string;  // Preview for linked audio clip (when hovering video track)
+  videoTrackId?: string;  // Preview for linked video clip (when hovering audio track)
+  isVideo?: boolean;      // Is the dragged file a video?
+  isAudio?: boolean;      // Is the dragged file audio-only?
+  hasAudio?: boolean;     // Does the video file have audio tracks?
+  duration?: number;      // Actual duration of dragged file
+  newTrackType?: 'video' | 'audio' | null;  // If hovering over "new track" drop zone
+}
+
+// Context menu state for clip right-click
+export interface ContextMenuState {
+  x: number;
+  y: number;
+  clipId: string;
+}
+
+// Marquee selection state for rectangle selection
+export interface MarqueeState {
+  startX: number;      // Start X position relative to track-lanes
+  startY: number;      // Start Y position relative to track-lanes
+  currentX: number;    // Current X position
+  currentY: number;    // Current Y position
+  startScrollX: number; // ScrollX at the time of starting selection
+  initialSelection: Set<string>; // Clips that were selected before marquee started (for shift+drag)
+  initialKeyframeSelection: Set<string>; // Keyframes that were selected before marquee started
+}
+
+// Props for TimelineRuler component
+export interface TimelineRulerProps {
+  duration: number;
+  zoom: number;
+  scrollX: number;
+  onRulerMouseDown: (e: React.MouseEvent) => void;
+  formatTime: (seconds: number) => string;
+}
+
+// Props for TimelineControls component
+export interface TimelineControlsProps {
+  isPlaying: boolean;
+  loopPlayback: boolean;
+  playheadPosition: number;
+  duration: number;
+  zoom: number;
+  snappingEnabled: boolean;
+  inPoint: number | null;
+  outPoint: number | null;
+  proxyEnabled: boolean;
+  currentlyGeneratingProxyId: string | null;
+  mediaFilesWithProxy: number;
+  showTranscriptMarkers: boolean;
+  thumbnailsEnabled: boolean;
+  waveformsEnabled: boolean;
+  toolMode: 'select' | 'cut';
+  onPlay: () => void;
+  onPause: () => void;
+  onStop: () => void;
+  onToggleLoop: () => void;
+  onSetZoom: (zoom: number) => void;
+  onToggleSnapping: () => void;
+  onSetInPoint: () => void;
+  onSetOutPoint: () => void;
+  onClearInOut: () => void;
+  onToggleProxy: () => void;
+  onToggleTranscriptMarkers: () => void;
+  onToggleThumbnails: () => void;
+  onToggleWaveforms: () => void;
+  onToggleCutTool: () => void;
+  onSetDuration: (duration: number) => void;
+  onFitToWindow: () => void;
+  onToggleSlotGrid: () => void;
+  slotGridActive: boolean;
+  formatTime: (seconds: number) => string;
+  parseTime: (timeStr: string) => number | null;
+}
+
+// Props for TimelineHeader component
+export interface TimelineHeaderProps {
+  track: TimelineTrack;
+  tracks: TimelineTrack[];  // All tracks for parenting target selection
+  isDimmed: boolean;
+  isExpanded: boolean;
+  dynamicHeight: number;
+  hasKeyframes: boolean;
+  selectedClipIds: Set<string>;
+  clips: TimelineClip[];
+  playheadPosition: number;
+  onToggleExpand: () => void;
+  onToggleSolo: () => void;
+  onToggleMuted: () => void;
+  onToggleVisible: () => void;
+  onRenameTrack: (name: string) => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+  onWheel: (e: React.WheelEvent) => void;
+  // For property labels - clipKeyframes map triggers re-render when keyframes change
+  clipKeyframes: Map<string, Array<{ id: string; clipId: string; time: number; property: AnimatableProperty; value: number; easing: string }>>;
+  getClipKeyframes: (clipId: string) => Array<{
+    id: string;
+    clipId: string;
+    time: number;
+    property: AnimatableProperty;
+    value: number;
+    easing: string;
+  }>;
+  // Keyframe controls
+  getInterpolatedTransform: (clipId: string, clipLocalTime: number) => ClipTransform;
+  getInterpolatedEffects: (clipId: string, clipLocalTime: number) => Array<{ id: string; type: string; name: string; params: Record<string, unknown> }>;
+  addKeyframe: (clipId: string, property: AnimatableProperty, value: number) => void;
+  setPlayheadPosition: (time: number) => void;
+  setPropertyValue: (clipId: string, property: AnimatableProperty, value: number) => void;
+  // Curve editor
+  expandedCurveProperties: Map<string, Set<AnimatableProperty>>;
+  onToggleCurveExpanded: (trackId: string, property: AnimatableProperty) => void;
+  hoveredKeyframeRow?: { trackId: string; property: AnimatableProperty } | null;
+  onKeyframeRowHover?: (trackId: string, property: AnimatableProperty, hovered: boolean) => void;
+  // Track parenting (layer linking)
+  onSetTrackParent: (trackId: string, parentTrackId: string | null) => void;
+  onTrackPickWhipDragStart: (trackId: string, startX: number, startY: number) => void;
+  onTrackPickWhipDragEnd: () => void;
+}
+
+// Props for TimelineTrack component
+export interface TimelineTrackProps {
+  track: TimelineTrack;
+  clips: TimelineClip[];
+  isDimmed: boolean;
+  isExpanded: boolean;
+  dynamicHeight: number;
+  isDragTarget: boolean;
+  isExternalDragTarget: boolean;
+  selectedClipIds: Set<string>;
+  selectedKeyframeIds: Set<string>;
+  clipDrag: ClipDragState | null;
+  clipTrim: ClipTrimState | null;
+  externalDrag: ExternalDragState | null;
+  zoom: number;
+  scrollX: number;
+  timelineRef: React.RefObject<HTMLDivElement | null>;
+  onClipMouseDown: (e: React.MouseEvent, clipId: string) => void;
+  onClipContextMenu: (e: React.MouseEvent, clipId: string) => void;
+  onTrimStart: (e: React.MouseEvent, clipId: string, edge: 'left' | 'right') => void;
+  onDrop: (e: React.DragEvent) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragEnter: (e: React.DragEvent) => void;
+  onDragLeave: (e: React.DragEvent) => void;
+  renderClip: (clip: TimelineClip, trackId: string) => React.ReactNode;
+  // For keyframe tracks - clipKeyframes map triggers re-render when keyframes change
+  clipKeyframes: Map<string, Array<{ id: string; clipId: string; time: number; property: AnimatableProperty; value: number; easing: string }>>;
+  renderKeyframeDiamonds: (trackId: string, property: AnimatableProperty) => React.ReactNode;
+  timeToPixel: (time: number) => number;
+  pixelToTime: (pixel: number) => number;
+  // Curve editor
+  expandedCurveProperties: Map<string, Set<AnimatableProperty>>;
+  onSelectKeyframe: (keyframeId: string, addToSelection: boolean) => void;
+  onMoveKeyframe: (keyframeId: string, newTime: number) => void;
+  onUpdateBezierHandle: (keyframeId: string, handle: 'in' | 'out', position: BezierHandle) => void;
+}
+
+// Pick whip drag state for layer parenting
+export interface PickWhipDragState {
+  sourceClipId: string;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+}
+
+export interface ClipKeyframeTimeGroup {
+  time: number;
+  keyframeIds: string[];
+  properties?: AnimatableProperty[];
+  hasStateChange?: boolean;
+}
+
+// Props for TimelineClip component
+export interface TimelineClipProps {
+  clip: TimelineClip;
+  trackId: string;
+  track: TimelineTrack;
+  tracks: TimelineTrack[];
+  clips: TimelineClip[];
+  isSelected: boolean;
+  isInLinkedGroup: boolean;  // True if clip has linkedGroupId (multicam)
+  isDragging: boolean;
+  isTrimming: boolean;
+  isFading: boolean;  // True if this clip is being fade-adjusted
+  isLinkedToDragging: boolean;
+  isLinkedToTrimming: boolean;
+  clipDrag: ClipDragState | null;
+  clipTrim: ClipTrimState | null;
+  clipFade: ClipFadeState | null;
+  zoom: number;
+  scrollX: number;
+  timelineRef: React.RefObject<HTMLDivElement | null>;
+  proxyEnabled: boolean;
+  proxyStatus: 'none' | 'generating' | 'ready' | 'error' | undefined;
+  proxyProgress: number;
+  showTranscriptMarkers: boolean;
+  toolMode: 'select' | 'cut';
+  snappingEnabled: boolean;
+  cutHoverInfo: { clipId: string; time: number } | null;
+  onCutHover: (clipId: string | null, time: number | null) => void;
+  onMouseDown: (e: React.MouseEvent) => void;
+  onDoubleClick: (e: React.MouseEvent) => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+  onTrimStart: (e: React.MouseEvent, edge: 'left' | 'right') => void;
+  onFadeStart: (e: React.MouseEvent, edge: 'left' | 'right') => void;
+  onCutAtPosition: (clipId: string, time: number) => void;
+  hasKeyframes: (clipId: string, property?: AnimatableProperty) => boolean;
+  fadeInDuration: number;  // Current fade-in duration in seconds
+  fadeOutDuration: number;  // Current fade-out duration in seconds
+  opacityKeyframes: Array<{
+    id: string;
+    time: number;
+    value: number;
+    easing: string;
+    handleIn?: { x: number; y: number };
+    handleOut?: { x: number; y: number };
+  }>;  // Opacity keyframes for fade curve visualization
+  allKeyframeTimes: number[];  // Unique keyframe times for tick marks on clip bar
+  keyframeTimeGroups?: ClipKeyframeTimeGroup[];  // Keyframe IDs grouped by clip-local time for global clip-bar handles
+  onMoveKeyframeGroup?: (keyframeIds: string[], newTime: number) => void;
+  timeToPixel: (time: number) => number;
+  pixelToTime: (pixel: number) => number;
+  formatTime: (seconds: number) => string;
+  // Pick whip for layer parenting
+  onPickWhipDragStart: (clipId: string, startX: number, startY: number) => void;
+  onPickWhipDragEnd: () => void;
+  onSetClipParent: (clipId: string, parentClipId: string | null) => void;
+}
+
+// Props for TimelineKeyframes component
+export interface TimelineKeyframesProps {
+  trackId: string;
+  property: AnimatableProperty;
+  clips: TimelineClip[];
+  selectedKeyframeIds: Set<string>;
+  clipKeyframes: Map<string, Array<{
+    id: string;
+    clipId: string;
+    time: number;
+    property: AnimatableProperty;
+    value: number;
+    easing: string;
+    rotationInterpolation?: RotationInterpolationMode;
+  }>>;
+  clipDrag: ClipDragState | null;
+  scrollX: number;
+  timelineRef: React.RefObject<HTMLDivElement | null>;
+  onSelectKeyframe: (keyframeId: string, addToSelection: boolean) => void;
+  onMoveKeyframe: (keyframeId: string, newTime: number) => void;
+  onUpdateKeyframe: (
+    keyframeId: string,
+    updates: { easing?: EasingType; rotationInterpolation?: RotationInterpolationMode },
+  ) => void;
+  onToggleCurveExpanded: (trackId: string, property: AnimatableProperty) => void;
+  timeToPixel: (time: number) => number;
+  pixelToTime: (pixel: number) => number;
+  isRowHovered?: boolean;
+  onKeyframeRowHover?: (trackId: string, property: AnimatableProperty, hovered: boolean) => void;
+}
+
+// Waveform props
+export interface WaveformProps {
+  waveform: number[];
+  width: number;
+  height: number;
+}

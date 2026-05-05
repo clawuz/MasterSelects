@@ -1,0 +1,1095 @@
+// Toolbar component - After Effects style menu bar
+
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
+import { Logger } from '../../services/logger';
+
+const log = Logger.create('Toolbar');
+import { useEngine } from '../../hooks/useEngine';
+import { useDockStore } from '../../stores/dockStore';
+import { PANEL_CONFIGS, AI_PANEL_TYPES, SCOPE_PANEL_TYPES, WIP_PANEL_TYPES, type PanelType } from '../../types/dock';
+import { useSettingsStore, type AutosaveInterval } from '../../stores/settingsStore';
+import { useRenderTargetStore } from '../../stores/renderTargetStore';
+import { useAccountStore } from '../../stores/accountStore';
+import { SettingsDialog } from './SettingsDialog';
+import { SavedToast } from './SavedToast';
+import { InfoDialog } from './InfoDialog';
+import { LegalDialog } from './LegalDialog';
+import type { LegalPage } from './LegalDialog';
+import { NativeHelperStatus } from './NativeHelperStatus';
+import {
+  RECENT_PROJECTS_CHANGED_EVENT,
+  projectFileService,
+  type RecentProjectEntry,
+} from '../../services/projectFileService';
+import { getShortcutRegistry } from '../../services/shortcutRegistry';
+import { useMediaStore } from '../../stores/mediaStore';
+import {
+  createNewProject,
+  openExistingProject,
+  saveCurrentProject,
+  loadProjectToStores,
+  setProjectLoadProgress,
+  setupAutoSync,
+  syncStoresToProject,
+} from '../../services/projectSync';
+import { openOutputManager } from '../outputManager/OutputManagerBoot';
+
+type MenuId = 'file' | 'edit' | 'view' | 'output' | 'info' | null;
+
+const VIEW_HIDDEN_PANEL_TYPES = new Set<PanelType>(['youtube']);
+const VIEW_CORE_PANEL_TYPES = (Object.keys(PANEL_CONFIGS) as PanelType[])
+  .filter((type) => (
+    !VIEW_HIDDEN_PANEL_TYPES.has(type)
+    && !SCOPE_PANEL_TYPES.includes(type)
+    && !WIP_PANEL_TYPES.includes(type)
+    && !AI_PANEL_TYPES.includes(type)
+  ));
+const VIEW_WIP_ONLY_PANEL_TYPES = WIP_PANEL_TYPES.filter((type) => !AI_PANEL_TYPES.includes(type));
+
+interface ToolbarProps {
+  onOpenChangelog?: () => void;
+  onOpenSplash?: () => void;
+}
+
+function formatRecentProjectDate(timestamp: number): string {
+  if (!Number.isFinite(timestamp)) {
+    return '';
+  }
+
+  return new Date(timestamp).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export function Toolbar({ onOpenChangelog, onOpenSplash }: ToolbarProps) {
+  const { isEngineReady, createOutputWindow } = useEngine();
+  const targets = useRenderTargetStore((s) => s.targets);
+  const outputTargets = useMemo(() => {
+    const result: { id: string; name: string }[] = [];
+    for (const t of targets.values()) {
+      if (t.destinationType === 'window') result.push({ id: t.id, name: t.name });
+    }
+    return result;
+  }, [targets]);
+  const {
+    resetLayout,
+    isPanelTypeVisible,
+    togglePanelType,
+    saveLayoutAsDefault,
+    saveNamedLayout,
+    loadSavedLayout,
+    savedLayouts,
+    defaultSavedLayoutId,
+    setDefaultSavedLayout,
+  } = useDockStore(useShallow(s => ({
+    resetLayout: s.resetLayout,
+    isPanelTypeVisible: s.isPanelTypeVisible,
+    togglePanelType: s.togglePanelType,
+    saveLayoutAsDefault: s.saveLayoutAsDefault,
+    saveNamedLayout: s.saveNamedLayout,
+    loadSavedLayout: s.loadSavedLayout,
+    savedLayouts: s.savedLayouts,
+    defaultSavedLayoutId: s.defaultSavedLayoutId,
+    setDefaultSavedLayout: s.setDefaultSavedLayout,
+  })));
+  const accountCredits = useAccountStore((s) => s.creditBalance);
+  const accountSession = useAccountStore((s) => s.session);
+  const accountUser = useAccountStore((s) => s.user);
+  const openAccountDialog = useAccountStore((s) => s.openAccountDialog);
+  const openAuthDialog = useAccountStore((s) => s.openAuthDialog);
+  const {
+    isSettingsOpen, openSettings, closeSettings,
+    saveMode,
+    autosaveEnabled, setAutosaveEnabled,
+    autosaveInterval, setAutosaveInterval,
+  } = useSettingsStore(useShallow(s => ({
+    isSettingsOpen: s.isSettingsOpen,
+    openSettings: s.openSettings,
+    closeSettings: s.closeSettings,
+    saveMode: s.saveMode,
+    autosaveEnabled: s.autosaveEnabled,
+    setAutosaveEnabled: s.setAutosaveEnabled,
+    autosaveInterval: s.autosaveInterval,
+    setAutosaveInterval: s.setAutosaveInterval,
+  })));
+
+  const [openMenu, setOpenMenu] = useState<MenuId>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [projectName, setProjectName] = useState('Untitled Project');
+  const [editName, setEditName] = useState(projectName);
+  const [isProjectOpen, setIsProjectOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [needsPermission, setNeedsPermission] = useState(false);
+  const [pendingProjectName, setPendingProjectName] = useState<string | null>(null);
+  const [showSavedToast, setShowSavedToast] = useState(false);
+  const [showInfoDialog, setShowInfoDialog] = useState(false);
+  const [showLegalDialog, setShowLegalDialog] = useState<LegalPage | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [recentProjects, setRecentProjects] = useState<RecentProjectEntry[]>([]);
+  const menuBarRef = useRef<HTMLDivElement>(null);
+  const autosaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isRenamingRef = useRef(false);
+
+  // Update project name from service - check periodically for changes
+  useEffect(() => {
+    const updateProjectState = () => {
+      const data = projectFileService.getProjectData();
+      if (data) {
+        setProjectName(data.name);
+        setIsProjectOpen(true);
+        setNeedsPermission(false);
+      } else {
+        setProjectName('No Project Open');
+        setIsProjectOpen(false);
+      }
+    };
+
+    updateProjectState();
+
+    // Check for project changes every 2000ms (handles WelcomeOverlay creating project)
+    // Reduced from 500ms to minimize unnecessary re-renders
+    const interval = setInterval(updateProjectState, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const refreshRecentProjects = () => {
+      setRecentProjects(projectFileService.getRecentProjects());
+    };
+
+    refreshRecentProjects();
+    window.addEventListener(RECENT_PROJECTS_CHANGED_EVENT, refreshRecentProjects);
+    window.addEventListener('storage', refreshRecentProjects);
+    return () => {
+      window.removeEventListener(RECENT_PROJECTS_CHANGED_EVENT, refreshRecentProjects);
+      window.removeEventListener('storage', refreshRecentProjects);
+    };
+  }, []);
+
+  // Try to restore last project on mount
+  useEffect(() => {
+    const restoreProject = async () => {
+      setIsLoading(true);
+      setProjectLoadProgress({
+        phase: 'opening',
+        percent: 3,
+        message: 'Restoring last project',
+        blocking: true,
+      });
+      const restored = await projectFileService.restoreLastProject();
+      if (restored) {
+        // Load project data into stores
+        await loadProjectToStores();
+        const data = projectFileService.getProjectData();
+        if (data) {
+          setProjectName(data.name);
+          setIsProjectOpen(true);
+        }
+      } else if (projectFileService.needsPermission()) {
+        // Permission needed - show button instead of auto-popup
+        setNeedsPermission(true);
+        setPendingProjectName(projectFileService.getPendingProjectName());
+        setProjectLoadProgress(null);
+      } else {
+        setProjectLoadProgress(null);
+      }
+      setIsLoading(false);
+
+      // Setup auto-sync after initialization
+      setupAutoSync();
+    };
+    restoreProject();
+  }, []);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    if (!openMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuBarRef.current && !menuBarRef.current.contains(e.target as Node)) {
+        setOpenMenu(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [openMenu]);
+
+  const handleSave = useCallback(async (showToast = true) => {
+    if (!projectFileService.isProjectOpen()) {
+      // No project open, prompt to create one
+      const name = prompt('Enter project name:', 'New Project');
+      if (!name) return;
+      setIsLoading(true);
+      const success = await createNewProject(name);
+      if (success) {
+        setProjectName(name);
+        setIsProjectOpen(true);
+        if (showToast) setShowSavedToast(true);
+      }
+      setIsLoading(false);
+    } else {
+      // Save current project with store synchronization
+      await saveCurrentProject();
+      if (showToast) setShowSavedToast(true);
+    }
+    setOpenMenu(null);
+  }, []);
+
+  // Autosave effect — only runs in interval mode
+  // In continuous mode, saves are handled by setupAutoSync in projectLifecycle.ts
+  useEffect(() => {
+    // Clear existing timer
+    if (autosaveTimerRef.current) {
+      clearInterval(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+
+    // Set up interval timer only when in interval save mode
+    if (saveMode === 'interval' && autosaveEnabled && isProjectOpen) {
+      const intervalMs = autosaveInterval * 60 * 1000; // Convert minutes to milliseconds
+      log.info(`Interval save enabled with ${autosaveInterval} minute interval`);
+
+      autosaveTimerRef.current = setInterval(async () => {
+        if (projectFileService.isProjectOpen() && projectFileService.hasUnsavedChanges()) {
+          log.info('Interval save: Creating backup and saving project...');
+          // Create backup before saving
+          await projectFileService.createBackup();
+          // Then save the project
+          await saveCurrentProject();
+          setShowSavedToast(true);
+        }
+      }, intervalMs);
+    } else if (saveMode === 'continuous' && isProjectOpen) {
+      log.info('Continuous save active — project saves automatically on every change');
+    }
+
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearInterval(autosaveTimerRef.current);
+      }
+    };
+  }, [saveMode, autosaveEnabled, autosaveInterval, isProjectOpen]);
+
+  const handleSaveAs = useCallback(async () => {
+    const name = prompt('Save project as:', projectName || 'New Project');
+    if (!name) return;
+
+    setIsLoading(true);
+    const success = await createNewProject(name);
+    if (success) {
+      setProjectName(name);
+      setIsProjectOpen(true);
+      setNeedsPermission(false);
+      setShowSavedToast(true);
+    }
+    setIsLoading(false);
+    setOpenMenu(null);
+  }, [projectName]);
+
+  const handleOpen = useCallback(async () => {
+    if (projectFileService.hasUnsavedChanges()) {
+      if (!confirm('You have unsaved changes. Open a different project?')) {
+        return;
+      }
+    }
+    setIsLoading(true);
+    setProjectLoadProgress({
+      phase: 'opening',
+      percent: 3,
+      message: 'Opening project',
+      blocking: true,
+    });
+    const success = await openExistingProject();
+    if (!success) {
+      setProjectLoadProgress(null);
+    }
+    if (success) {
+      const data = projectFileService.getProjectData();
+      if (data) {
+        setProjectName(data.name);
+        setIsProjectOpen(true);
+      }
+    }
+    setIsLoading(false);
+    setOpenMenu(null);
+  }, []);
+
+  const handleOpenRecent = useCallback(async (projectId: string) => {
+    if (projectFileService.hasUnsavedChanges()) {
+      if (!confirm('You have unsaved changes. Open a different project?')) {
+        return;
+      }
+    }
+
+    setIsLoading(true);
+    setProjectLoadProgress({
+      phase: 'opening',
+      percent: 3,
+      message: 'Opening recent project',
+      blocking: true,
+    });
+
+    try {
+      const success = await projectFileService.openRecentProject(projectId);
+      if (!success) {
+        setProjectLoadProgress(null);
+        window.alert('Could not open that recent project. It may have moved, or the browser may need permission again.');
+        return;
+      }
+
+      await loadProjectToStores();
+      const data = projectFileService.getProjectData();
+      if (data) {
+        setProjectName(data.name);
+        setIsProjectOpen(true);
+        setNeedsPermission(false);
+        setPendingProjectName(null);
+      }
+    } catch (error) {
+      log.error('Failed to open recent project', error);
+      setProjectLoadProgress(null);
+      window.alert('Could not open that recent project.');
+    } finally {
+      setRecentProjects(projectFileService.getRecentProjects());
+      setIsLoading(false);
+      setOpenMenu(null);
+    }
+  }, []);
+
+  const handleClearRecentProjects = useCallback(async () => {
+    await projectFileService.clearRecentProjects();
+    setRecentProjects([]);
+    setOpenMenu(null);
+  }, []);
+
+  const handleNameSubmit = useCallback(async () => {
+    // Prevent double-call from Enter + blur
+    if (isRenamingRef.current) return;
+
+    setRenameError(null);
+
+    if (editName.trim()) {
+      const newName = editName.trim();
+      const data = projectFileService.getProjectData();
+
+      // Only rename if name actually changed
+      if (data && newName !== data.name) {
+        isRenamingRef.current = true;
+        setIsLoading(true);
+        const success = await projectFileService.renameProject(newName);
+        if (success) {
+          setProjectName(newName);
+          setShowSavedToast(true);
+        } else {
+          // Revert to old name on failure and show error
+          setEditName(data.name);
+          setRenameError(`Could not rename to "${newName}" — a folder with that name may already exist.`);
+          setTimeout(() => setRenameError(null), 4000);
+        }
+        setIsLoading(false);
+        isRenamingRef.current = false;
+      }
+    }
+    setIsEditingName(false);
+  }, [editName]);
+
+  const handleNew = useCallback(async () => {
+    if (projectFileService.hasUnsavedChanges()) {
+      if (!confirm('You have unsaved changes. Create a new project?')) {
+        return;
+      }
+    }
+    const name = prompt('Enter project name:', 'New Project');
+    if (!name) return;
+
+    setIsLoading(true);
+    // Create project folder first (user picks directory via dialog)
+    const folderCreated = await projectFileService.createProject(name);
+    if (folderCreated) {
+      // Reset all stores to clean state
+      useMediaStore.getState().newProject();
+      useMediaStore.getState().setProjectName(name);
+      // Sync clean state to project file and save
+      await syncStoresToProject();
+      await projectFileService.saveProject();
+
+      setProjectName(name);
+      setIsProjectOpen(true);
+      setNeedsPermission(false);
+    }
+    setIsLoading(false);
+    setOpenMenu(null);
+  }, []);
+
+  // Keyboard shortcut handler (capture phase — intercepts before other handlers)
+  useEffect(() => {
+    const registry = getShortcutRegistry();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Save/SaveAs: Always prevent browser save dialog, even in input fields
+      if (registry.matches('project.save', e) || registry.matches('project.saveAs', e)) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Skip if in input field
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+        if (registry.matches('project.saveAs', e)) {
+          // Save As
+          const name = prompt('Save project as:', projectName || 'New Project');
+          if (name) {
+            createNewProject(name).then(success => {
+              if (success) {
+                setProjectName(name);
+                setIsProjectOpen(true);
+                setShowSavedToast(true);
+              }
+            });
+          }
+        } else {
+          // Save
+          if (!projectFileService.isProjectOpen()) {
+            const name = prompt('Enter project name:', 'New Project');
+            if (name) {
+              createNewProject(name).then(success => {
+                if (success) {
+                  setProjectName(name);
+                  setIsProjectOpen(true);
+                  setShowSavedToast(true);
+                }
+              });
+            }
+          } else {
+            saveCurrentProject().then(() => setShowSavedToast(true));
+          }
+        }
+        return;
+      }
+
+      // Skip other shortcuts if in input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (registry.matches('project.new', e)) {
+        e.preventDefault();
+        handleNew();
+      }
+
+      if (registry.matches('project.open', e)) {
+        e.preventDefault();
+        handleOpen();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [handleNew, handleOpen, projectName]);
+
+  // Handle restoring permission for pending project
+  const handleRestorePermission = useCallback(async () => {
+    setIsLoading(true);
+    setProjectLoadProgress({
+      phase: 'opening',
+      percent: 3,
+      message: 'Restoring project permission',
+      blocking: true,
+    });
+    const success = await projectFileService.requestPendingPermission();
+    if (success) {
+      await loadProjectToStores();
+      const data = projectFileService.getProjectData();
+      if (data) {
+        setProjectName(data.name);
+        setIsProjectOpen(true);
+      }
+      setNeedsPermission(false);
+      setPendingProjectName(null);
+    } else {
+      setProjectLoadProgress(null);
+    }
+    setIsLoading(false);
+  }, []);
+
+  const handleNewOutput = useCallback(() => {
+    const output = createOutputWindow(`Output ${Date.now()}`);
+    if (output) {
+      log.info('Created output window', { id: output.id });
+    }
+    setOpenMenu(null);
+  }, [createOutputWindow]);
+
+  const handleMenuClick = (menuId: MenuId) => {
+    setOpenMenu(openMenu === menuId ? null : menuId);
+  };
+
+  const handleMenuHover = (menuId: MenuId) => {
+    if (openMenu !== null) {
+      setOpenMenu(menuId);
+    }
+  };
+
+  const closeMenu = () => setOpenMenu(null);
+
+  // Dynamic shortcut labels from registry
+  const shortcutLabels = useMemo(() => {
+    const r = getShortcutRegistry();
+    return {
+      new: r.getLabel('project.new'),
+      open: r.getLabel('project.open'),
+      save: r.getLabel('project.save'),
+      saveAs: r.getLabel('project.saveAs'),
+      copy: r.getLabel('edit.copy'),
+      paste: r.getLabel('edit.paste'),
+    };
+  }, []);
+  const sortedSavedLayouts = useMemo(() => {
+    return [...savedLayouts].sort((left, right) => {
+      const leftIsDefault = left.id === defaultSavedLayoutId;
+      const rightIsDefault = right.id === defaultSavedLayoutId;
+      if (leftIsDefault !== rightIsDefault) {
+        return leftIsDefault ? -1 : 1;
+      }
+      return right.updatedAt - left.updatedAt;
+    });
+  }, [defaultSavedLayoutId, savedLayouts]);
+
+  const handleSaveNamedLayout = useCallback(() => {
+    const name = window.prompt('Save current layout as:', 'New Layout');
+    if (!name?.trim()) {
+      return;
+    }
+
+    saveNamedLayout(name);
+    closeMenu();
+  }, [saveNamedLayout]);
+
+  const handleLoadSavedLayout = useCallback((layoutId: string) => {
+    loadSavedLayout(layoutId);
+    closeMenu();
+  }, [loadSavedLayout]);
+
+  const handleSetDefaultSavedLayout = useCallback((layoutId: string) => {
+    setDefaultSavedLayout(layoutId);
+    closeMenu();
+  }, [setDefaultSavedLayout]);
+
+  return (
+    <div className="toolbar">
+      {/* Project Name */}
+      <div className="toolbar-project">
+        {needsPermission ? (
+          <button
+            className="restore-permission-btn"
+            onClick={handleRestorePermission}
+            disabled={isLoading}
+            title={`Click to restore access to ${pendingProjectName}`}
+          >
+            {isLoading ? 'Restoring...' : `Restore "${pendingProjectName}"`}
+          </button>
+        ) : isEditingName ? (
+          <input
+            type="text"
+            className="project-name-input"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={handleNameSubmit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleNameSubmit();
+              if (e.key === 'Escape') setIsEditingName(false);
+            }}
+            autoFocus
+          />
+        ) : (
+          <span
+            className={`project-name ${!isProjectOpen ? 'no-project' : ''}`}
+            onClick={() => {
+              if (isProjectOpen) {
+                setEditName(projectName);
+                setIsEditingName(true);
+              }
+            }}
+            title={isProjectOpen ? 'Click to rename project' : 'No project open'}
+          >
+            {projectName}
+            {projectFileService.hasUnsavedChanges() && ' •'}
+          </span>
+        )}
+      </div>
+
+      {/* Menu Bar */}
+      <div className="menu-bar" ref={menuBarRef}>
+        {/* File Menu */}
+        <div className="menu-item">
+          <button
+            className={`menu-trigger ${openMenu === 'file' ? 'active' : ''}`}
+            onClick={() => handleMenuClick('file')}
+            onMouseEnter={() => handleMenuHover('file')}
+          >
+            File
+          </button>
+          {openMenu === 'file' && (
+            <div className="menu-dropdown">
+              <button className="menu-option" onClick={handleNew} disabled={isLoading}>
+                <span>New Project...</span>
+                <span className="shortcut">{shortcutLabels.new}</span>
+              </button>
+              <button className="menu-option" onClick={handleOpen} disabled={isLoading}>
+                <span>Open Project...</span>
+                <span className="shortcut">{shortcutLabels.open}</span>
+              </button>
+              <div className="menu-item-with-submenu">
+                <button className="menu-option" disabled={isLoading}>
+                  <span>Open Recent</span>
+                </button>
+                <div className="menu-nested-submenu menu-nested-submenu-recent">
+                  {recentProjects.length === 0 ? (
+                    <span className="menu-empty">No recent projects</span>
+                  ) : (
+                    <>
+                      {recentProjects.map((project) => {
+                        const meta = formatRecentProjectDate(project.lastOpenedAt);
+                        const title = project.path || project.name;
+                        return (
+                          <button
+                            key={project.id}
+                            className="menu-option menu-option-recent"
+                            onClick={() => handleOpenRecent(project.id)}
+                            disabled={isLoading}
+                            title={title}
+                          >
+                            <span className="menu-recent-text">
+                              <span className="menu-recent-name">{project.name}</span>
+                              <span className="menu-recent-meta">{meta}</span>
+                            </span>
+                            <span className="menu-recent-kind">
+                              {project.backend === 'native' ? 'Native' : 'Browser'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                      <div className="menu-separator" />
+                      <button className="menu-option" onClick={handleClearRecentProjects}>
+                        <span>Clear Recent Projects</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="menu-separator" />
+              <button className="menu-option" onClick={() => handleSave()} disabled={isLoading || !isProjectOpen}>
+                <span>Save</span>
+                <span className="shortcut">{shortcutLabels.save}</span>
+              </button>
+              <button className="menu-option" onClick={handleSaveAs} disabled={isLoading}>
+                <span>Save As...</span>
+                <span className="shortcut">{shortcutLabels.saveAs}</span>
+              </button>
+              {isProjectOpen && (
+                <>
+                  <div className="menu-separator" />
+                  <div className="menu-submenu">
+                    <span className="menu-label">Project Info</span>
+                    <span className="menu-info">
+                      {projectFileService.hasUnsavedChanges() ? '● Unsaved changes' : '✓ All changes saved'}
+                    </span>
+                  </div>
+                </>
+              )}
+              <div className="menu-separator" />
+              <div className="menu-item-with-submenu">
+                <button className="menu-option">
+                  <span>Autosave</span>
+                </button>
+                <div className="menu-nested-submenu">
+                  <button
+                    className={`menu-option ${autosaveEnabled ? 'checked' : ''}`}
+                    onClick={() => { setAutosaveEnabled(!autosaveEnabled); }}
+                  >
+                    <span>{autosaveEnabled ? '✓ ' : '   '}Enable Autosave</span>
+                  </button>
+                  <div className="menu-separator" />
+                  <span className="menu-sublabel">Interval</span>
+                  {([
+                    { value: 1 as AutosaveInterval, label: '1 minute' },
+                    { value: 2 as AutosaveInterval, label: '2 minutes' },
+                    { value: 5 as AutosaveInterval, label: '5 minutes' },
+                    { value: 10 as AutosaveInterval, label: '10 minutes' },
+                  ]).map(({ value, label }) => (
+                    <button
+                      key={value}
+                      className={`menu-option ${autosaveInterval === value ? 'checked' : ''}`}
+                      onClick={() => { setAutosaveInterval(value); }}
+                      disabled={!autosaveEnabled}
+                    >
+                      <span>{autosaveInterval === value ? '✓ ' : '   '}{label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="menu-separator" />
+              <button
+                className="menu-option"
+                onClick={async () => {
+                  if (confirm('This will clear ALL cached data and reload. Continue?')) {
+                    // Set flag to prevent beforeunload from saving data back
+                    (window as Window & { __CLEARING_CACHE__?: boolean }).__CLEARING_CACHE__ = true;
+
+                    // Clear all localStorage
+                    localStorage.clear();
+                    sessionStorage.clear();
+
+                    // Delete all known IndexedDB databases
+                    const dbNames = ['webvj-db', 'webvj-projects', 'webvj-apikeys', 'keyval-store', 'MASterSelectsDB', 'multicam-settings'];
+                    for (const name of dbNames) {
+                      indexedDB.deleteDatabase(name);
+                    }
+
+                    // Clear caches
+                    if ('caches' in window) {
+                      const names = await caches.keys();
+                      for (const name of names) {
+                        await caches.delete(name);
+                      }
+                    }
+
+                    // Unregister service workers
+                    if ('serviceWorker' in navigator) {
+                      const registrations = await navigator.serviceWorker.getRegistrations();
+                      for (const reg of registrations) {
+                        await reg.unregister();
+                      }
+                    }
+
+                    // Clear again after a small delay to catch any last writes
+                    setTimeout(() => {
+                      localStorage.clear();
+                      sessionStorage.clear();
+                      // Force navigation to prevent any beforeunload handlers
+                      window.location.href = window.location.origin + window.location.pathname + '?cleared=' + Date.now();
+                    }, 100);
+                  }
+                }}
+              >
+                <span>Clear All Cache & Reload</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Edit Menu */}
+        <div className="menu-item">
+          <button
+            className={`menu-trigger ${openMenu === 'edit' ? 'active' : ''}`}
+            onClick={() => handleMenuClick('edit')}
+            onMouseEnter={() => handleMenuHover('edit')}
+          >
+            Edit
+          </button>
+          {openMenu === 'edit' && (
+            <div className="menu-dropdown">
+              <button className="menu-option" onClick={() => { document.execCommand('copy'); closeMenu(); }}>
+                <span>Copy</span>
+                <span className="shortcut">{shortcutLabels.copy}</span>
+              </button>
+              <button className="menu-option" onClick={() => { document.execCommand('paste'); closeMenu(); }}>
+                <span>Paste</span>
+                <span className="shortcut">{shortcutLabels.paste}</span>
+              </button>
+              <div className="menu-separator" />
+              <button className="menu-option" onClick={() => { openSettings(); closeMenu(); }}>
+                <span>Settings...</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* View Menu */}
+        <div className="menu-item">
+          <button
+            className={`menu-trigger ${openMenu === 'view' ? 'active' : ''}`}
+            onClick={() => handleMenuClick('view')}
+            onMouseEnter={() => handleMenuHover('view')}
+          >
+            View
+          </button>
+          {openMenu === 'view' && (
+            <div className="menu-dropdown menu-dropdown-wide">
+              <div className="menu-item-with-submenu">
+                <button className="menu-option">
+                  <span>Panels</span>
+                </button>
+                <div className="menu-nested-submenu menu-nested-submenu-panels">
+                  <span className="menu-sublabel">Core</span>
+                  {VIEW_CORE_PANEL_TYPES.map((type) => {
+                    const config = PANEL_CONFIGS[type];
+                    const isVisible = isPanelTypeVisible(type);
+                    return (
+                      <button
+                        key={type}
+                        className={`menu-option ${isVisible ? 'checked' : ''}`}
+                        onClick={() => togglePanelType(type)}
+                      >
+                        <span>{isVisible ? '✓ ' : '   '}{config.title}</span>
+                      </button>
+                    );
+                  })}
+
+                  <div className="menu-separator" />
+                  <span className="menu-sublabel">AI</span>
+                  {AI_PANEL_TYPES.map((type) => {
+                    const config = PANEL_CONFIGS[type];
+                    const isWip = WIP_PANEL_TYPES.includes(type);
+                    const isVisible = isPanelTypeVisible(type);
+                    return (
+                      <button
+                        key={type}
+                        className={`menu-option ${isWip ? 'menu-option-wip' : ''} ${isVisible ? 'checked' : ''}`}
+                        onClick={isWip ? undefined : () => togglePanelType(type)}
+                        disabled={isWip}
+                      >
+                        <span>{isVisible ? '✓ ' : '   '}{config.title}</span>
+                        {isWip && <span className="menu-wip-badge">🐛</span>}
+                      </button>
+                    );
+                  })}
+
+                  <div className="menu-separator" />
+                  <span className="menu-sublabel">Scopes</span>
+                  {SCOPE_PANEL_TYPES.map((type) => {
+                    const config = PANEL_CONFIGS[type];
+                    const isVisible = isPanelTypeVisible(type);
+                    return (
+                      <button
+                        key={type}
+                        className={`menu-option ${isVisible ? 'checked' : ''}`}
+                        onClick={() => togglePanelType(type)}
+                      >
+                        <span>{isVisible ? '✓ ' : '   '}{config.title}</span>
+                      </button>
+                    );
+                  })}
+
+                  {VIEW_WIP_ONLY_PANEL_TYPES.length > 0 && (
+                    <>
+                      <div className="menu-separator" />
+                      <span className="menu-sublabel">Work in Progress</span>
+                      {VIEW_WIP_ONLY_PANEL_TYPES.map((type) => {
+                        const config = PANEL_CONFIGS[type];
+                        return (
+                          <button
+                            key={type}
+                            className="menu-option menu-option-wip"
+                            disabled
+                          >
+                            <span>   {config.title}</span>
+                            <span className="menu-wip-badge">🐛</span>
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="menu-separator" />
+              <div className="menu-item-with-submenu">
+                <button className="menu-option">
+                  <span>Layouts</span>
+                </button>
+                <div className="menu-nested-submenu menu-nested-submenu-layouts">
+                  <button className="menu-option" onClick={handleSaveNamedLayout}>
+                    <span>Save Current Layout...</span>
+                  </button>
+                  <button className="menu-option" onClick={() => { saveLayoutAsDefault(); closeMenu(); }}>
+                    <span>Set Current as Default</span>
+                  </button>
+                  <button className="menu-option" onClick={() => { resetLayout(); closeMenu(); }}>
+                    <span>Load Default Layout</span>
+                  </button>
+                  <div className="menu-separator" />
+                  <span className="menu-sublabel">Saved Layouts</span>
+                  {sortedSavedLayouts.length === 0 ? (
+                    <span className="menu-empty">No saved layouts</span>
+                  ) : (
+                    sortedSavedLayouts.map((savedLayout) => {
+                      const isDefaultLayout = savedLayout.id === defaultSavedLayoutId;
+                      return (
+                        <div key={savedLayout.id} className="menu-layout-row">
+                          <button
+                            className={`menu-option menu-layout-load ${isDefaultLayout ? 'checked' : ''}`}
+                            onClick={() => handleLoadSavedLayout(savedLayout.id)}
+                            title={savedLayout.name}
+                          >
+                            <span className="menu-layout-name">{savedLayout.name}</span>
+                            {isDefaultLayout && <span className="menu-hint">Default</span>}
+                          </button>
+                          <button
+                            className={`menu-layout-default-btn ${isDefaultLayout ? 'active' : ''}`}
+                            onClick={() => handleSetDefaultSavedLayout(savedLayout.id)}
+                            title={isDefaultLayout ? 'Default layout' : 'Set as default'}
+                            type="button"
+                          >
+                            {isDefaultLayout ? 'Default' : 'Set'}
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Output Menu */}
+        <div className="menu-item">
+          <button
+            className={`menu-trigger ${openMenu === 'output' ? 'active' : ''}`}
+            onClick={() => handleMenuClick('output')}
+            onMouseEnter={() => handleMenuHover('output')}
+          >
+            Output
+          </button>
+          {openMenu === 'output' && (
+            <div className="menu-dropdown">
+              <button className="menu-option" onClick={handleNewOutput} disabled={!isEngineReady}>
+                <span>New Output Window</span>
+              </button>
+              <button className="menu-option" onClick={() => { openOutputManager(); setOpenMenu(null); }}>
+                <span>Open Output Manager</span>
+              </button>
+              {outputTargets.length > 0 && (
+                <>
+                  <div className="menu-separator" />
+                  <div className="menu-submenu">
+                    <span className="menu-label">Active Outputs</span>
+                    {outputTargets.map((output) => (
+                      <div key={output.id} className="menu-option">
+                        <span>{output.name || `Output ${output.id}`}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Info Menu */}
+        <div className="menu-item">
+          <button
+            className={`menu-trigger ${openMenu === 'info' ? 'active' : ''}`}
+            onClick={() => handleMenuClick('info')}
+            onMouseEnter={() => handleMenuHover('info')}
+          >
+            Info
+          </button>
+          {openMenu === 'info' && (
+            <div className="menu-dropdown">
+              <button className="menu-option" onClick={() => { window.dispatchEvent(new CustomEvent('open-welcome-screen')); closeMenu(); }}>
+                <span>Where are you coming from?</span>
+              </button>
+              <div className="menu-separator" />
+              <button className="menu-option" onClick={() => { window.dispatchEvent(new CustomEvent('open-tutorial-campaigns')); closeMenu(); }}>
+                <span>Tutorials</span>
+              </button>
+              <div className="menu-separator" />
+              <button className="menu-option" onClick={() => { window.dispatchEvent(new CustomEvent('start-tutorial')); closeMenu(); }}>
+                <span>Quick Tour</span>
+              </button>
+              <button className="menu-option" onClick={() => { window.dispatchEvent(new CustomEvent('start-timeline-tutorial')); closeMenu(); }}>
+                <span>Timeline Tour</span>
+              </button>
+              <div className="menu-separator" />
+              <button className="menu-option" onClick={() => { onOpenChangelog?.(); closeMenu(); }}>
+                <span>Changelog</span>
+              </button>
+              <div className="menu-separator" />
+              <button className="menu-option" onClick={() => { onOpenSplash?.(); closeMenu(); }}>
+                <span>About</span>
+              </button>
+              <div className="menu-separator" />
+              <button className="menu-option" onClick={() => { setShowLegalDialog('imprint'); closeMenu(); }}>
+                <span>Imprint</span>
+              </button>
+              <button className="menu-option" onClick={() => { setShowLegalDialog('privacy'); closeMenu(); }}>
+                <span>Privacy Policy</span>
+              </button>
+              <button className="menu-option" onClick={() => { setShowLegalDialog('contact'); closeMenu(); }}>
+                <span>Contact</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Spacer */}
+      <div className="toolbar-spacer" />
+
+      {/* Center */}
+      <div className="toolbar-center" />
+
+      {/* Spacer */}
+      <div className="toolbar-spacer" />
+
+      {/* Status */}
+      <div className="toolbar-section toolbar-right">
+        {accountSession?.authenticated && (
+          <button
+            className="toolbar-credit-pill"
+            onClick={openAccountDialog}
+            title={`${accountCredits} credits available`}
+            type="button"
+          >
+            <span className="toolbar-credit-pill-label">Credits</span>
+            <strong className="toolbar-credit-pill-value">{accountCredits}</strong>
+          </button>
+        )}
+        <button
+          className="menu-trigger"
+          onClick={() => (accountSession?.authenticated ? openAccountDialog() : openAuthDialog())}
+          type="button"
+        >
+          {accountSession?.authenticated ? (accountUser?.email?.split('@')[0] || 'Account') : 'Sign in'}
+        </button>
+        <NativeHelperStatus />
+
+        {!isEngineReady && (
+          <span className="status loading">○ Loading...</span>
+        )}
+      </div>
+
+      {/* Settings Dialog */}
+      {isSettingsOpen && <SettingsDialog onClose={closeSettings} />}
+
+      {/* Saved Toast */}
+      <SavedToast visible={showSavedToast} onHide={() => setShowSavedToast(false)} />
+
+      {/* Rename Error Toast */}
+      {renameError && (
+        <div style={{
+          position: 'fixed',
+          top: 40,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: '#dc3545',
+          color: '#fff',
+          padding: '8px 16px',
+          borderRadius: 6,
+          fontSize: 12,
+          zIndex: 9999,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+        }}>
+          {renameError}
+        </div>
+      )}
+
+      {/* Info Dialog */}
+      {showInfoDialog && <InfoDialog onClose={() => setShowInfoDialog(false)} />}
+
+      {/* Legal Dialog */}
+      {showLegalDialog && <LegalDialog initialPage={showLegalDialog} onClose={() => setShowLegalDialog(null)} />}
+    </div>
+  );
+}

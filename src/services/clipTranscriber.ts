@@ -1,0 +1,1005 @@
+// Clip Transcriber Service
+// Handles transcription of individual clips using Whisper (local) or cloud APIs
+
+import { Logger } from './logger';
+import { useTimelineStore } from '../stores/timeline';
+import { triggerTimelineSave, useMediaStore } from '../stores/mediaStore';
+import type { MediaFile } from '../stores/mediaStore/types';
+import { useSettingsStore } from '../stores/settingsStore';
+import type { TranscriptWord, TranscriptStatus } from '../types';
+import { projectFileService } from './project/ProjectFileService';
+
+const log = Logger.create('ClipTranscriber');
+
+type MediaFileWithTranscriptRanges = MediaFile & {
+  transcribedRanges?: [number, number][];
+};
+
+interface OpenAITranscriptionResponse {
+  words?: Array<{ word: string; start: number; end: number }>;
+}
+
+interface TranscriptApiWord {
+  word?: string;
+  text?: string;
+  start?: number;
+  end?: number;
+  confidence?: number;
+  speaker?: number | string;
+}
+
+interface AssemblyTranscriptResponse {
+  id?: string;
+  status?: string;
+  error?: string;
+  words?: TranscriptApiWord[];
+}
+
+interface DeepgramResponse {
+  results?: {
+    channels?: Array<{
+      alternatives?: Array<{
+        words?: TranscriptApiWord[];
+      }>;
+    }>;
+  };
+}
+
+/**
+ * Calculate coverage ratio from a set of time ranges vs total duration.
+ * Merges overlapping ranges and returns 0-1.
+ */
+function calcCoverage(ranges: [number, number][], totalDuration: number): number {
+  if (totalDuration <= 0 || ranges.length === 0) return 0;
+  // Sort by start time
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+  // Merge overlapping
+  const merged: [number, number][] = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const last = merged[merged.length - 1];
+    if (sorted[i][0] <= last[1]) {
+      last[1] = Math.max(last[1], sorted[i][1]);
+    } else {
+      merged.push([...sorted[i]]);
+    }
+  }
+  const covered = merged.reduce((sum, [s, e]) => sum + (e - s), 0);
+  return Math.min(1, covered / totalDuration);
+}
+
+// Worker instance
+let worker: Worker | null = null;
+let isTranscribing = false;
+let currentClipId: string | null = null;
+
+/**
+ * Get or create the transcription worker
+ */
+function getWorker(): Worker {
+  if (!worker) {
+    worker = new Worker(
+      new URL('../workers/transcriptionWorker.ts', import.meta.url),
+      { type: 'module' }
+    );
+  }
+  return worker;
+}
+
+/**
+ * Find uncovered time gaps within a range given a set of covered ranges.
+ */
+function findGaps(
+  coveredRanges: [number, number][],
+  rangeStart: number,
+  rangeEnd: number
+): [number, number][] {
+  const clipped: [number, number][] = [];
+  for (const [s, e] of coveredRanges) {
+    const cs = Math.max(s, rangeStart);
+    const ce = Math.min(e, rangeEnd);
+    if (cs < ce) clipped.push([cs, ce]);
+  }
+  clipped.sort((a, b) => a[0] - b[0]);
+
+  const merged: [number, number][] = [];
+  for (const range of clipped) {
+    if (merged.length > 0 && range[0] <= merged[merged.length - 1][1]) {
+      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], range[1]);
+    } else {
+      merged.push([...range]);
+    }
+  }
+
+  const gaps: [number, number][] = [];
+  let cursor = rangeStart;
+  for (const [s, e] of merged) {
+    if (cursor < s) gaps.push([cursor, s]);
+    cursor = Math.max(cursor, e);
+  }
+  if (cursor < rangeEnd) gaps.push([cursor, rangeEnd]);
+  return gaps;
+}
+
+/**
+ * Extract audio from a clip's file and transcribe it
+ * Uses the configured provider (local Whisper, OpenAI, AssemblyAI, or Deepgram)
+ * When continueMode is true, only transcribes uncovered time ranges.
+ */
+export async function transcribeClip(clipId: string, language: string = 'auto', options?: { continueMode?: boolean }): Promise<void> {
+  if (isTranscribing) {
+    log.warn('Already transcribing');
+    return;
+  }
+
+  const store = useTimelineStore.getState();
+  const clip = store.clips.find(c => c.id === clipId);
+
+  if (!clip || !clip.file) {
+    log.warn('Clip not found or has no file', { clipId });
+    return;
+  }
+
+  // Check if file has audio (also check extension as fallback since file.type can be empty after project reload)
+  const mimeType = clip.file.type || '';
+  const fileName = clip.file.name || '';
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  const audioVideoExts = ['mp4', 'webm', 'mkv', 'mov', 'avi', 'mp3', 'wav', 'ogg', 'aac', 'flac', 'm4a'];
+  const hasAudio = mimeType.startsWith('video/') || mimeType.startsWith('audio/') || audioVideoExts.includes(ext);
+  if (!hasAudio) {
+    log.warn('File does not contain audio', { type: mimeType, name: fileName });
+    return;
+  }
+
+  // Get transcription provider settings
+  const { transcriptionProvider, apiKeys } = useSettingsStore.getState();
+  const apiKey = transcriptionProvider !== 'local' ? apiKeys[transcriptionProvider] : null;
+
+  // Validate API key if using cloud provider
+  if (transcriptionProvider !== 'local' && !apiKey) {
+    log.error(`No API key configured for ${transcriptionProvider}`);
+    updateClipTranscript(clipId, {
+      status: 'error',
+      progress: 0,
+      message: `No API key configured for ${transcriptionProvider}. Go to Settings to add one.`,
+    });
+    return;
+  }
+
+  const continueMode = options?.continueMode ?? false;
+  const mediaFileId = clip.source?.mediaFileId || clip.mediaFileId;
+
+  // In continue mode, find uncovered gaps
+  const inPoint = clip.inPoint || 0;
+  const outPoint = clip.outPoint || clip.duration;
+  let transcriptionGaps: [number, number][] | null = null;
+
+  if (continueMode && mediaFileId && projectFileService.isProjectOpen()) {
+    try {
+      const transcribedRanges = await projectFileService.getTranscribedRanges(mediaFileId);
+      transcriptionGaps = findGaps(transcribedRanges, inPoint, outPoint);
+      if (transcriptionGaps.length === 0) {
+        log.info('No gaps to transcribe, clip is fully covered');
+        return;
+      }
+      log.info(`Continue mode: ${transcriptionGaps.length} gaps to transcribe`, { gaps: transcriptionGaps });
+    } catch (err) {
+      log.warn('Failed to get transcribed ranges for continue mode', err);
+      transcriptionGaps = null;
+    }
+  }
+
+  isTranscribing = true;
+  currentClipId = clipId;
+
+  const providerName = transcriptionProvider === 'local' ? 'Local Whisper' : transcriptionProvider.toUpperCase();
+  log.info(`Starting transcription for ${clip.name} using ${providerName}${continueMode ? ' (continue mode)' : ''}`);
+
+  // Update status to transcribing
+  updateClipTranscript(clipId, {
+    status: 'transcribing',
+    progress: 0,
+    message: 'Extracting audio...',
+  });
+
+  try {
+    // Determine ranges to transcribe
+    const ranges = transcriptionGaps || [[inPoint, outPoint]];
+    const allNewWords: TranscriptWord[] = [];
+    const totalDuration = ranges.reduce((sum, [s, e]) => sum + (e - s), 0);
+    let processedDuration = 0;
+
+    for (let ri = 0; ri < ranges.length; ri++) {
+      const [rangeStart, rangeEnd] = ranges[ri];
+      const rangeDuration = rangeEnd - rangeStart;
+
+      log.debug(`Extracting audio from ${rangeStart.toFixed(1)}s to ${rangeEnd.toFixed(1)}s (${rangeDuration.toFixed(1)}s)`);
+
+      const audioBuffer = await extractAudioBuffer(clip.file, rangeStart, rangeEnd);
+      const audioDuration = audioBuffer.duration;
+
+      log.debug(`Audio extracted: ${audioDuration.toFixed(1)}s`);
+
+      // Calculate progress offset for this range
+      const progressBase = Math.round((processedDuration / totalDuration) * 100);
+      const progressScale = rangeDuration / totalDuration;
+
+      let words: TranscriptWord[];
+
+      if (transcriptionProvider === 'local') {
+        const audioData = await resampleAudio(audioBuffer, 16000);
+        updateClipTranscript(clipId, {
+          progress: progressBase + Math.round(5 * progressScale),
+          message: ranges.length > 1 ? `Transcribing range ${ri + 1}/${ranges.length}...` : 'Starting local transcription...',
+        });
+        words = await runWorkerTranscription(clipId, audioData, language, audioDuration, rangeStart);
+      } else {
+        updateClipTranscript(clipId, {
+          progress: progressBase + Math.round(10 * progressScale),
+          message: ranges.length > 1 ? `Uploading range ${ri + 1}/${ranges.length} to ${providerName}...` : `Uploading to ${providerName}...`,
+        });
+
+        const audioBlob = await audioBufferToWav(audioBuffer);
+
+        switch (transcriptionProvider) {
+          case 'openai':
+            words = await transcribeWithOpenAI(clipId, audioBlob, language, apiKey!, rangeStart);
+            break;
+          case 'assemblyai':
+            words = await transcribeWithAssemblyAI(clipId, audioBlob, language, apiKey!, rangeStart);
+            break;
+          case 'deepgram':
+            words = await transcribeWithDeepgram(clipId, audioBlob, language, apiKey!, rangeStart);
+            break;
+          default:
+            throw new Error(`Unknown provider: ${transcriptionProvider}`);
+        }
+      }
+
+      allNewWords.push(...words);
+      processedDuration += rangeDuration;
+    }
+
+    // Merge with existing words if continue mode
+    let finalWords = allNewWords;
+    if (continueMode && clip.transcript?.length) {
+      const existing = clip.transcript;
+      const merged = [...existing];
+      for (const word of allNewWords) {
+        const duplicate = merged.some(
+          (w: TranscriptWord) => Math.abs(w.start - word.start) < 0.05 && Math.abs(w.end - word.end) < 0.05
+        );
+        if (!duplicate) merged.push(word);
+      }
+      finalWords = merged.sort((a, b) => a.start - b.start);
+    }
+
+    // Complete
+    updateClipTranscript(clipId, {
+      status: 'ready',
+      progress: 100,
+      words: finalWords,
+      message: undefined,
+    });
+    triggerTimelineSave();
+
+    // Propagate transcript to MediaFile for badge display + carry-over
+    if (mediaFileId && finalWords.length > 0) {
+      // Collect all transcribed ranges (existing + new)
+      const newRanges: [number, number][] = ranges.map(([s, e]) => [s, e]);
+      propagateTranscriptToMediaFile(mediaFileId, finalWords, newRanges);
+    }
+
+    log.info(`Complete: ${finalWords.length} words for ${clip.name}`);
+
+  } catch (error) {
+    log.error('Transcription failed', error);
+    updateClipTranscript(clipId, {
+      status: 'error',
+      progress: 0,
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  } finally {
+    isTranscribing = false;
+    currentClipId = null;
+  }
+}
+
+/**
+ * Run transcription in Web Worker
+ * @param inPointOffset - Offset to add to word timestamps (for trimmed clips)
+ */
+function runWorkerTranscription(
+  clipId: string,
+  audioData: Float32Array,
+  language: string,
+  audioDuration: number,
+  inPointOffset: number = 0
+): Promise<TranscriptWord[]> {
+  return new Promise((resolve, reject) => {
+    const w = getWorker();
+
+    // Helper to offset word timestamps
+    const offsetWords = (words: TranscriptWord[]): TranscriptWord[] =>
+      words.map(word => ({
+        ...word,
+        start: word.start + inPointOffset,
+        end: word.end + inPointOffset,
+      }));
+
+    const handleMessage = (event: MessageEvent) => {
+      const { type, progress, message, words, error } = event.data;
+
+      switch (type) {
+        case 'progress':
+          updateClipTranscript(clipId, { progress, message });
+          break;
+
+        case 'words':
+          // Offset partial results too
+          updateClipTranscript(clipId, {
+            words: offsetWords(words),
+            message: `Transcribed ${words.length} words`,
+          });
+          break;
+
+        case 'complete':
+          w.removeEventListener('message', handleMessage);
+          w.removeEventListener('error', handleError);
+          // Offset final words before returning
+          resolve(offsetWords(words));
+          break;
+
+        case 'error':
+          w.removeEventListener('message', handleMessage);
+          w.removeEventListener('error', handleError);
+          reject(new Error(error));
+          break;
+      }
+    };
+
+    const handleError = (error: ErrorEvent) => {
+      w.removeEventListener('message', handleMessage);
+      w.removeEventListener('error', handleError);
+      reject(new Error(error.message || 'Worker error'));
+    };
+
+    w.addEventListener('message', handleMessage);
+    w.addEventListener('error', handleError);
+
+    // Send audio data to worker (transferable for performance)
+    w.postMessage(
+      { type: 'transcribe', audioData, language, audioDuration },
+      [audioData.buffer]
+    );
+  });
+}
+
+/**
+ * Update clip transcript data in the timeline store
+ */
+function updateClipTranscript(
+  clipId: string,
+  data: {
+    status?: TranscriptStatus;
+    progress?: number;
+    words?: TranscriptWord[];
+    message?: string;
+  }
+): void {
+  const store = useTimelineStore.getState();
+  const clips = store.clips.map(clip => {
+    if (clip.id !== clipId) return clip;
+
+    return {
+      ...clip,
+      transcriptStatus: data.status ?? clip.transcriptStatus,
+      transcriptProgress: data.progress ?? clip.transcriptProgress,
+      transcript: data.words ?? clip.transcript,
+      transcriptMessage: data.message,
+    };
+  });
+
+  useTimelineStore.setState({ clips });
+}
+
+/**
+ * Propagate transcript to MediaFile for badge display and carry-over to new clips.
+ * Merges with existing transcript if the MediaFile already has words from a different region.
+ * Also tracks transcribed ranges for continue mode.
+ */
+function propagateTranscriptToMediaFile(mediaFileId: string, words: TranscriptWord[], newRanges?: [number, number][]): void {
+  try {
+    const mediaState = useMediaStore.getState();
+    const file = mediaState.files.find((f: MediaFile) => f.id === mediaFileId);
+    if (!file) return;
+
+    // Merge with existing transcript if present
+    let mergedWords = words;
+    if (file.transcript?.length) {
+      const existing = file.transcript;
+      const merged = [...existing];
+      for (const word of words) {
+        const duplicate = merged.some(
+          (w: TranscriptWord) => Math.abs(w.start - word.start) < 0.05 && Math.abs(w.end - word.end) < 0.05
+        );
+        if (!duplicate) {
+          merged.push(word);
+        }
+      }
+      mergedWords = merged.sort((a, b) => a.start - b.start);
+    }
+
+    // Calculate transcript coverage from transcribed ranges (not word ranges - silence is still transcribed)
+    let transcriptCoverage = 0;
+    if (file.duration && file.duration > 0) {
+      // Merge existing transcribed ranges with new ones
+      const existingRanges = (file as MediaFileWithTranscriptRanges).transcribedRanges || [];
+      const allRanges = [...existingRanges, ...(newRanges || [])];
+      transcriptCoverage = allRanges.length > 0 ? calcCoverage(allRanges, file.duration) : 0;
+    }
+
+    // Merge transcribed ranges for storage
+    const existingRanges: [number, number][] = (file as MediaFileWithTranscriptRanges).transcribedRanges || [];
+    const mergedRanges = mergeRanges([...existingRanges, ...(newRanges || [])]);
+
+    useMediaStore.setState({
+      files: mediaState.files.map((f: MediaFile) =>
+        f.id === mediaFileId
+          ? { ...f, transcriptStatus: 'ready' as TranscriptStatus, transcript: mergedWords, transcriptCoverage, transcribedRanges: mergedRanges }
+          : f
+      ),
+    });
+    // Persist transcript + ranges to project folder (TRANSCRIPTS/{mediaId}.json)
+    projectFileService.saveTranscript(mediaFileId, mergedWords, mergedRanges).then(saved => {
+      if (saved) log.debug('Transcript saved to project folder', { mediaFileId });
+    }).catch(() => { /* no project open */ });
+
+    log.debug('Propagated transcript to MediaFile', { mediaFileId, wordCount: mergedWords.length, coverage: transcriptCoverage.toFixed(2) });
+  } catch (e) {
+    log.warn('Failed to propagate transcript to MediaFile', e);
+  }
+}
+
+/**
+ * Merge and sort a list of ranges, combining overlapping ones.
+ */
+function mergeRanges(ranges: [number, number][]): [number, number][] {
+  if (ranges.length === 0) return [];
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const last = merged[merged.length - 1];
+    if (sorted[i][0] <= last[1]) {
+      last[1] = Math.max(last[1], sorted[i][1]);
+    } else {
+      merged.push([...sorted[i]]);
+    }
+  }
+  return merged;
+}
+
+/**
+ * Extract audio buffer from a media file, optionally slicing to a time range
+ * @param file - The media file to extract audio from
+ * @param startTime - Start time in seconds (optional, defaults to 0)
+ * @param endTime - End time in seconds (optional, defaults to full duration)
+ */
+async function extractAudioBuffer(
+  file: File,
+  startTime?: number,
+  endTime?: number
+): Promise<AudioBuffer> {
+  const audioContext = new AudioContext();
+  const arrayBuffer = await file.arrayBuffer();
+  const fullBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+  // If no time range specified, return full buffer
+  if (startTime === undefined && endTime === undefined) {
+    audioContext.close();
+    return fullBuffer;
+  }
+
+  // Calculate sample range
+  const sampleRate = fullBuffer.sampleRate;
+  const startSample = Math.floor((startTime || 0) * sampleRate);
+  const endSample = Math.min(
+    Math.ceil((endTime || fullBuffer.duration) * sampleRate),
+    fullBuffer.length
+  );
+  const sliceLength = endSample - startSample;
+
+  // Create new buffer with sliced audio
+  const slicedBuffer = audioContext.createBuffer(
+    fullBuffer.numberOfChannels,
+    sliceLength,
+    sampleRate
+  );
+
+  // Copy each channel's data
+  for (let channel = 0; channel < fullBuffer.numberOfChannels; channel++) {
+    const sourceData = fullBuffer.getChannelData(channel);
+    const destData = slicedBuffer.getChannelData(channel);
+    for (let i = 0; i < sliceLength; i++) {
+      destData[i] = sourceData[startSample + i];
+    }
+  }
+
+  audioContext.close();
+  return slicedBuffer;
+}
+
+/**
+ * Resample audio to target sample rate (e.g., 16kHz for Whisper)
+ */
+async function resampleAudio(
+  audioBuffer: AudioBuffer,
+  targetSampleRate: number
+): Promise<Float32Array> {
+  const channelData = audioBuffer.getChannelData(0); // Mono
+  const originalSampleRate = audioBuffer.sampleRate;
+
+  if (originalSampleRate === targetSampleRate) {
+    return channelData;
+  }
+
+  // Simple linear interpolation resampling
+  const ratio = originalSampleRate / targetSampleRate;
+  const newLength = Math.floor(channelData.length / ratio);
+  const resampled = new Float32Array(newLength);
+
+  for (let i = 0; i < newLength; i++) {
+    const srcIndex = i * ratio;
+    const srcIndexFloor = Math.floor(srcIndex);
+    const srcIndexCeil = Math.min(srcIndexFloor + 1, channelData.length - 1);
+    const t = srcIndex - srcIndexFloor;
+    resampled[i] = channelData[srcIndexFloor] * (1 - t) + channelData[srcIndexCeil] * t;
+  }
+
+  return resampled;
+}
+
+/**
+ * Clear transcript from a clip
+ */
+export function clearClipTranscript(clipId: string): void {
+  updateClipTranscript(clipId, {
+    status: 'none',
+    progress: 0,
+    words: undefined,
+    message: undefined,
+  });
+  triggerTimelineSave();
+}
+
+/**
+ * Cancel ongoing transcription
+ */
+export function cancelTranscription(): void {
+  if (worker && isTranscribing) {
+    worker.terminate();
+    worker = null;
+    if (currentClipId) {
+      updateClipTranscript(currentClipId, {
+        status: 'none',
+        progress: 0,
+        message: undefined,
+      });
+    }
+    isTranscribing = false;
+    currentClipId = null;
+  }
+}
+
+// ============================================================================
+// Cloud API Transcription Functions
+// ============================================================================
+
+/**
+ * Convert AudioBuffer to WAV Blob for API upload
+ */
+async function audioBufferToWav(audioBuffer: AudioBuffer): Promise<Blob> {
+  const numChannels = 1; // Mono
+  const sampleRate = audioBuffer.sampleRate;
+  const format = 1; // PCM
+  const bitDepth = 16;
+
+  const channelData = audioBuffer.getChannelData(0);
+  const samples = new Int16Array(channelData.length);
+
+  // Convert float samples to 16-bit PCM
+  for (let i = 0; i < channelData.length; i++) {
+    const s = Math.max(-1, Math.min(1, channelData[i]));
+    samples[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+
+  const dataSize = samples.length * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  // WAV header
+  const writeString = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true); // Subchunk1Size
+  view.setUint16(20, format, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * (bitDepth / 8), true);
+  view.setUint16(32, numChannels * (bitDepth / 8), true);
+  view.setUint16(34, bitDepth, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // Write PCM samples
+  const dataView = new Int16Array(buffer, 44);
+  dataView.set(samples);
+
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+// OpenAI file size limit: 25MB (26214400 bytes). Use 24MB as safe threshold.
+const OPENAI_MAX_BYTES = 24 * 1024 * 1024;
+
+/**
+ * Send a single WAV blob to OpenAI Whisper and return raw word results
+ */
+async function openAISingleRequest(
+  audioBlob: Blob,
+  language: string,
+  apiKey: string,
+): Promise<Array<{ word: string; start: number; end: number }>> {
+  const formData = new FormData();
+  formData.append('file', audioBlob, 'audio.wav');
+  formData.append('model', 'whisper-1');
+  if (language !== 'auto') {
+    formData.append('language', language);
+  }
+  formData.append('response_format', 'verbose_json');
+  formData.append('timestamp_granularities[]', 'word');
+
+  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: { message: response.statusText } }));
+    throw new Error(`OpenAI API error: ${response.status}: ${error.error?.message || response.statusText}`);
+  }
+
+  const result = await response.json() as OpenAITranscriptionResponse;
+  return result.words || [];
+}
+
+/**
+ * Split an AudioBuffer into chunks that produce WAV files under the size limit
+ */
+function splitAudioBuffer(audioBuffer: AudioBuffer, maxWavBytes: number): AudioBuffer[] {
+  const sampleRate = audioBuffer.sampleRate;
+  const bytesPerSample = 2; // 16-bit PCM mono
+  const headerSize = 44;
+  const maxSamples = Math.floor((maxWavBytes - headerSize) / bytesPerSample);
+  const totalSamples = audioBuffer.length;
+
+  if (totalSamples <= maxSamples) {
+    return [audioBuffer];
+  }
+
+  const chunks: AudioBuffer[] = [];
+  const numChannels = audioBuffer.numberOfChannels;
+  let offset = 0;
+
+  while (offset < totalSamples) {
+    const chunkLength = Math.min(maxSamples, totalSamples - offset);
+    const ctx = new OfflineAudioContext(numChannels, chunkLength, sampleRate);
+    const chunkBuffer = ctx.createBuffer(numChannels, chunkLength, sampleRate);
+
+    for (let ch = 0; ch < numChannels; ch++) {
+      const src = audioBuffer.getChannelData(ch);
+      const dst = chunkBuffer.getChannelData(ch);
+      for (let i = 0; i < chunkLength; i++) {
+        dst[i] = src[offset + i];
+      }
+    }
+
+    chunks.push(chunkBuffer);
+    offset += chunkLength;
+  }
+
+  return chunks;
+}
+
+/**
+ * Transcribe using OpenAI Whisper API
+ * Automatically splits audio into chunks if it exceeds the 25MB API limit
+ */
+async function transcribeWithOpenAI(
+  clipId: string,
+  audioBlob: Blob,
+  language: string,
+  apiKey: string,
+  inPointOffset: number
+): Promise<TranscriptWord[]> {
+  // If small enough, send directly
+  if (audioBlob.size <= OPENAI_MAX_BYTES) {
+    updateClipTranscript(clipId, { progress: 20, message: 'Sending to OpenAI...' });
+
+    const rawWords = await openAISingleRequest(audioBlob, language, apiKey);
+
+    updateClipTranscript(clipId, { progress: 80, message: 'Processing response...' });
+
+    return rawWords.map((word, index) => ({
+      id: `word-${index}`,
+      text: word.word,
+      start: (word.start || 0) + inPointOffset,
+      end: (word.end || word.start + 0.1) + inPointOffset,
+      confidence: 1,
+      speaker: 'Speaker 1',
+    }));
+  }
+
+  // Audio too large - need to split into chunks
+  log.info(`Audio WAV is ${(audioBlob.size / 1024 / 1024).toFixed(1)}MB, splitting into chunks...`);
+  updateClipTranscript(clipId, { progress: 10, message: 'Audio too large, splitting...' });
+
+  // Re-decode the WAV blob to get an AudioBuffer we can split
+  const audioContext = new AudioContext();
+  const arrayBuffer = await audioBlob.arrayBuffer();
+  const fullBuffer = await audioContext.decodeAudioData(arrayBuffer);
+  audioContext.close();
+
+  const chunks = splitAudioBuffer(fullBuffer, OPENAI_MAX_BYTES);
+  log.info(`Split into ${chunks.length} chunks`);
+
+  const allWords: TranscriptWord[] = [];
+  let globalWordIndex = 0;
+  const sampleRate = fullBuffer.sampleRate;
+  let sampleOffset = 0;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkTimeOffset = sampleOffset / sampleRate;
+    const progressBase = 15 + (70 * i / chunks.length);
+    const progressEnd = 15 + (70 * (i + 1) / chunks.length);
+
+    updateClipTranscript(clipId, {
+      progress: Math.round(progressBase),
+      message: `Transcribing chunk ${i + 1}/${chunks.length}...`,
+    });
+
+    const chunkWav = await audioBufferToWav(chunks[i]);
+    const rawWords = await openAISingleRequest(chunkWav, language, apiKey);
+
+    for (const word of rawWords) {
+      allWords.push({
+        id: `word-${globalWordIndex++}`,
+        text: word.word,
+        start: (word.start || 0) + chunkTimeOffset + inPointOffset,
+        end: (word.end || word.start + 0.1) + chunkTimeOffset + inPointOffset,
+        confidence: 1,
+        speaker: 'Speaker 1',
+      });
+    }
+
+    updateClipTranscript(clipId, {
+      progress: Math.round(progressEnd),
+      words: allWords,
+      message: `Chunk ${i + 1}/${chunks.length} done (${allWords.length} words)`,
+    });
+
+    sampleOffset += chunks[i].length;
+  }
+
+  return allWords;
+}
+
+/**
+ * Transcribe using AssemblyAI API
+ */
+async function transcribeWithAssemblyAI(
+  clipId: string,
+  audioBlob: Blob,
+  language: string,
+  apiKey: string,
+  inPointOffset: number
+): Promise<TranscriptWord[]> {
+  // Step 1: Upload audio
+  updateClipTranscript(clipId, {
+    progress: 15,
+    message: 'Uploading to AssemblyAI...',
+  });
+
+  const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
+    method: 'POST',
+    headers: {
+      Authorization: apiKey,
+      'Content-Type': 'application/octet-stream',
+    },
+    body: audioBlob,
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error(`AssemblyAI upload failed: ${uploadResponse.statusText}`);
+  }
+
+  const { upload_url } = await uploadResponse.json();
+
+  // Step 2: Start transcription
+  updateClipTranscript(clipId, {
+    progress: 30,
+    message: 'Starting transcription...',
+  });
+
+  // Map common language codes to AssemblyAI format
+  const languageMap: Record<string, string> = {
+    de: 'de',
+    en: 'en',
+    es: 'es',
+    fr: 'fr',
+    it: 'it',
+    pt: 'pt',
+    nl: 'nl',
+    pl: 'pl',
+    ru: 'ru',
+    ja: 'ja',
+    zh: 'zh',
+    ko: 'ko',
+  };
+
+  const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
+    method: 'POST',
+    headers: {
+      Authorization: apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      audio_url: upload_url,
+      // Auto-detect: use language_detection, otherwise specify language
+      ...(language === 'auto'
+        ? { language_detection: true }
+        : { language_code: languageMap[language] || language }),
+    }),
+  });
+
+  if (!transcriptResponse.ok) {
+    throw new Error(`AssemblyAI transcription request failed: ${transcriptResponse.statusText}`);
+  }
+
+  const { id: transcriptId } = await transcriptResponse.json() as { id: string };
+
+  // Step 3: Poll for completion
+  let result: AssemblyTranscriptResponse | null = null;
+  let attempts = 0;
+  const maxAttempts = 120; // 2 minutes max
+
+  while (attempts < maxAttempts) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    attempts++;
+
+    const pollResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
+      headers: { Authorization: apiKey },
+    });
+
+    result = await pollResponse.json() as AssemblyTranscriptResponse;
+
+    if (result.status === 'completed') {
+      break;
+    } else if (result.status === 'error') {
+      throw new Error(`AssemblyAI error: ${result.error}`);
+    }
+
+    // Update progress (30-80% during polling)
+    const progress = 30 + Math.min(50, attempts * 0.5);
+    updateClipTranscript(clipId, {
+      progress,
+      message: `Transcribing... (${result.status})`,
+    });
+  }
+
+  if (!result || result.status !== 'completed') {
+    throw new Error('AssemblyAI transcription timed out');
+  }
+
+  updateClipTranscript(clipId, {
+    progress: 90,
+    message: 'Processing response...',
+  });
+
+  // Convert AssemblyAI response to TranscriptWord[]
+  const words: TranscriptWord[] = (result.words || []).map((word, index) => {
+    const startMs = typeof word.start === 'number' ? word.start : 0;
+    const endMs = typeof word.end === 'number' ? word.end : startMs + 100;
+    return {
+      id: `word-${index}`,
+      text: word.text ?? word.word ?? '',
+      start: (startMs / 1000) + inPointOffset, // AssemblyAI uses milliseconds
+      end: (endMs / 1000) + inPointOffset,
+      confidence: word.confidence || 1,
+      speaker: word.speaker ? String(word.speaker) : 'Speaker 1',
+    };
+  });
+
+  return words;
+}
+
+/**
+ * Transcribe using Deepgram API
+ */
+async function transcribeWithDeepgram(
+  clipId: string,
+  audioBlob: Blob,
+  language: string,
+  apiKey: string,
+  inPointOffset: number
+): Promise<TranscriptWord[]> {
+  updateClipTranscript(clipId, {
+    progress: 20,
+    message: 'Sending to Deepgram...',
+  });
+
+  // Build query params
+  const params = new URLSearchParams({
+    model: 'nova-2',
+    punctuate: 'true',
+    utterances: 'false',
+  });
+  // Auto-detect: use detect_language, otherwise specify language
+  if (language === 'auto') {
+    params.set('detect_language', 'true');
+  } else {
+    params.set('language', language);
+  }
+
+  const response = await fetch(`https://api.deepgram.com/v1/listen?${params}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Token ${apiKey}`,
+      'Content-Type': 'audio/wav',
+    },
+    body: audioBlob,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(`Deepgram API error: ${error.error || error.err_msg || response.statusText}`);
+  }
+
+  updateClipTranscript(clipId, {
+    progress: 80,
+    message: 'Processing response...',
+  });
+
+  const result = await response.json() as DeepgramResponse;
+  const channel = result.results?.channels?.[0];
+  const alternative = channel?.alternatives?.[0];
+
+  if (!alternative) {
+    throw new Error('No transcription results from Deepgram');
+  }
+
+  // Convert Deepgram response to TranscriptWord[]
+  const words: TranscriptWord[] = (alternative.words || []).map((word, index) => {
+    const start = typeof word.start === 'number' ? word.start : 0;
+    const end = typeof word.end === 'number' ? word.end : start + 0.1;
+    const speaker = typeof word.speaker === 'number'
+      ? `Speaker ${word.speaker + 1}`
+      : word.speaker ?? 'Speaker 1';
+    return {
+      id: `word-${index}`,
+      text: word.word ?? word.text ?? '',
+      start: start + inPointOffset,
+      end: end + inPointOffset,
+      confidence: word.confidence || 1,
+      speaker,
+    };
+  });
+
+  return words;
+}

@@ -1,0 +1,659 @@
+// React hook for WebGPU engine integration - Optimized
+
+import { useEffect, useRef, useCallback } from 'react';
+import { engine } from '../engine/WebGPUEngine';
+import { useEngineStore } from '../stores/engineStore';
+import { useTimelineStore } from '../stores/timeline';
+import { useMediaStore } from '../stores/mediaStore';
+import { useSettingsStore } from '../stores/settingsStore';
+import { useSAM2Store, maskToImageData } from '../stores/sam2Store';
+import type { ClipMask, MaskVertex } from '../types';
+import { generateMaskTexture } from '../utils/maskRenderer';
+import { layerBuilder, playheadState } from '../services/layerBuilder';
+import { layerPlaybackManager } from '../services/layerPlaybackManager';
+import { renderScheduler } from '../services/renderScheduler';
+import { getPlaybackDebugStats } from '../services/playbackDebugSnapshot';
+import { framePhaseMonitor } from '../services/framePhaseMonitor';
+import { playbackHealthMonitor } from '../services/playbackHealthMonitor';
+import { Logger } from '../services/logger';
+
+const log = Logger.create('Engine');
+const MASK_TEXTURE_DRAG_THROTTLE_MS = 80;
+const MASK_TEXTURE_DRAG_MAX_EDGE = 640;
+
+// Create a stable hash of mask properties (including feather since blur is CPU-side now)
+// This is faster than JSON.stringify for comparison
+function getMaskShapeHash(masks: ClipMask[]): string {
+  return masks.map(m =>
+    `${m.enabled !== false}|${m.inverted}|${m.closed}|${m.mode}|` +
+    `${m.vertices.map((v: MaskVertex) => [
+      v.x.toFixed(4),
+      v.y.toFixed(4),
+      v.handleIn.x.toFixed(4),
+      v.handleIn.y.toFixed(4),
+      v.handleOut.x.toFixed(4),
+      v.handleOut.y.toFixed(4),
+    ].join(',')).join(';')}|` +
+    `${m.position.x.toFixed(4)},${m.position.y.toFixed(4)}|` +
+    `${(m.feather || 0).toFixed(2)}|${m.featherQuality ?? 50}`
+  ).join('||');
+}
+
+export function useEngine() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const isEngineReady = useEngineStore((state) => state.isEngineReady);
+  const isPlaying = useTimelineStore((state) => state.isPlaying);
+  const initRef = useRef(false);
+
+  // Initialize engine - only once
+  useEffect(() => {
+    if (initRef.current) return;
+    initRef.current = true;
+
+    async function init() {
+      const success = await engine.initialize();
+      useEngineStore.getState().setEngineReady(success);
+      if (success) {
+        // Get and store GPU info
+        const gpuInfo = engine.getGPUInfo();
+        useEngineStore.getState().setGpuInfo(gpuInfo);
+
+        // Show Linux Vulkan warning if on Linux
+        const isLinux = navigator.platform.toLowerCase().includes('linux');
+        if (isLinux) {
+          useEngineStore.getState().setLinuxVulkanWarning(true);
+        }
+
+        // Output window reconnection handled by OutputManager if available
+      } else {
+        // Determine specific failure reason
+        const hasGPU = typeof navigator.gpu !== 'undefined';
+        let error: string;
+        if (!hasGPU) {
+          error = 'WebGPU is not available in this browser. Please use Chrome 113+ or Edge 113+.';
+        } else {
+          error = 'No compatible GPU adapter found. Your GPU may not support WebGPU. '
+            + 'Try enabling hardware acceleration in browser settings, '
+            + 'or switch to a GPU with Vulkan/D3D12 support.';
+        }
+        useEngineStore.getState().setEngineInitFailed(true, error);
+        log.error('Engine initialization failed', { hasGPU, error });
+      }
+    }
+
+    init();
+
+    return () => {
+      // Don't destroy on unmount - singleton should persist
+    };
+  }, []);
+
+  // Set up canvas
+  useEffect(() => {
+    if (isEngineReady && canvasRef.current) {
+      engine.setPreviewCanvas(canvasRef.current);
+    }
+  }, [isEngineReady]);
+
+  // Update engine resolution from active composition (fallback: settingsStore default)
+  useEffect(() => {
+    if (!isEngineReady) return;
+
+    const updateResolution = () => {
+      const { previewQuality } = useSettingsStore.getState();
+      const { activeCompositionId, compositions } = useMediaStore.getState();
+
+      // Active composition drives engine resolution; fallback to settingsStore default
+      let baseWidth: number;
+      let baseHeight: number;
+      if (activeCompositionId) {
+        const activeComp = compositions.find(c => c.id === activeCompositionId);
+        if (activeComp) {
+          baseWidth = activeComp.width;
+          baseHeight = activeComp.height;
+        } else {
+          const { outputResolution } = useSettingsStore.getState();
+          baseWidth = outputResolution.width;
+          baseHeight = outputResolution.height;
+        }
+      } else {
+        const { outputResolution } = useSettingsStore.getState();
+        baseWidth = outputResolution.width;
+        baseHeight = outputResolution.height;
+      }
+
+      // Apply preview quality scaling to base resolution
+      const scaledWidth = Math.round(baseWidth * previewQuality);
+      const scaledHeight = Math.round(baseHeight * previewQuality);
+
+      engine.setResolution(scaledWidth, scaledHeight);
+      log.info(`Resolution set to ${scaledWidth}×${scaledHeight} (${previewQuality * 100}% of ${baseWidth}×${baseHeight})`);
+    };
+
+    // Initial update
+    updateResolution();
+
+    // Subscribe to active composition changes (comp switch → resolution update)
+    const unsubscribeActiveComp = useMediaStore.subscribe(
+      (state) => state.activeCompositionId,
+      () => updateResolution()
+    );
+
+    // Subscribe to composition data changes (resize of active comp)
+    const unsubscribeCompositions = useMediaStore.subscribe(
+      (state) => state.compositions,
+      () => updateResolution()
+    );
+
+    // Subscribe to previewQuality changes
+    const unsubscribeSettings = useSettingsStore.subscribe(
+      (state) => state.previewQuality,
+      () => updateResolution()
+    );
+
+    return () => {
+      unsubscribeActiveComp();
+      unsubscribeCompositions();
+      unsubscribeSettings();
+    };
+  }, [isEngineReady]);
+
+  // Track mask changes and update engine mask textures
+  const maskVersionRef = useRef<Map<string, string>>(new Map());
+
+  // Helper function to process a single clip's mask
+  const processClipMask = useCallback((
+    clip: { id: string; masks?: import('../types').ClipMask[] },
+    engineDimensions: { width: number; height: number },
+    options: {
+      cacheSuffix?: string;
+      featherScale?: number;
+      maxFeatherQualityScale?: number;
+    } = {},
+  ): boolean => {
+    // Check for SAM2 AI mask (takes priority over bezier masks)
+    const sam2State = useSAM2Store.getState();
+    if (sam2State.isActive && sam2State.currentClipId === clip.id && sam2State.liveMask) {
+      const mask = sam2State.liveMask;
+      const maskImageData = maskToImageData(mask.maskData, mask.width, mask.height, sam2State.inverted);
+      const cacheKey = clip.id;
+      // Use a unique version key for SAM2 masks
+      const sam2Version = `sam2_${mask.maskData.length}_${sam2State.inverted}_${engineDimensions.width}x${engineDimensions.height}`;
+      if (maskVersionRef.current.get(cacheKey) !== sam2Version) {
+        maskVersionRef.current.set(cacheKey, sam2Version);
+        engine.updateMaskTexture(clip.id, maskImageData);
+        return true;
+      }
+      return false;
+    }
+
+    if (clip.masks && clip.masks.length > 0) {
+      // Create version string - includes feather since blur is applied on CPU
+      const maskVersion = `${getMaskShapeHash(clip.masks)}_${engineDimensions.width}x${engineDimensions.height}_${options.cacheSuffix ?? 'full'}`;
+      const cacheKey = clip.id;
+      const prevVersion = maskVersionRef.current.get(cacheKey);
+
+      // Regenerate texture if mask properties changed (shape, feather, etc.)
+      if (maskVersion !== prevVersion) {
+        maskVersionRef.current.set(cacheKey, maskVersion);
+
+        // Generate mask texture at engine render resolution (blur applied on CPU)
+        const maskImageData = generateMaskTexture(
+          clip.masks,
+          engineDimensions.width,
+          engineDimensions.height,
+          {
+            featherScale: options.featherScale,
+            maxFeatherQualityScale: options.maxFeatherQualityScale,
+          },
+        );
+
+        if (maskImageData) {
+          log.debug(`Generated mask texture for clip ${clip.id}: ${engineDimensions.width}x${engineDimensions.height}, masks: ${clip.masks.length}`);
+          engine.updateMaskTexture(clip.id, maskImageData);
+        } else {
+          engine.removeMaskTexture(clip.id);
+        }
+        return true;
+      }
+    } else if (clip.id) {
+      // Clip exists but no masks, clear the mask texture
+      const cacheKey = clip.id;
+      if (maskVersionRef.current.has(cacheKey)) {
+        maskVersionRef.current.delete(cacheKey);
+        engine.removeMaskTexture(clip.id);
+        return true;
+      }
+    }
+    return false;
+  }, []);
+
+  // Throttle mask texture updates during drag; the SVG overlay stays exact.
+  const lastMaskTextureUpdate = useRef(0);
+
+  // Helper function to update mask textures - extracted to avoid duplication
+  const updateMaskTextures = useCallback((force = false, timelineTime?: number) => {
+    const { clips, playheadPosition, maskDragging, getInterpolatedMasks } = useTimelineStore.getState();
+    const effectivePlayheadPosition = timelineTime ?? playheadPosition;
+
+    if (maskDragging && !force) {
+      const now = performance.now();
+      if (now - lastMaskTextureUpdate.current < MASK_TEXTURE_DRAG_THROTTLE_MS) {
+        return; // Skip this update, too soon
+      }
+      lastMaskTextureUpdate.current = now;
+    }
+
+    // Get engine output dimensions (the actual render resolution)
+    const engineDimensions = engine.getOutputDimensions();
+    const dragScale = maskDragging
+      ? Math.min(1, MASK_TEXTURE_DRAG_MAX_EDGE / Math.max(engineDimensions.width, engineDimensions.height))
+      : 1;
+    const maskDimensions = dragScale < 1
+      ? {
+          width: Math.max(1, Math.round(engineDimensions.width * dragScale)),
+          height: Math.max(1, Math.round(engineDimensions.height * dragScale)),
+        }
+      : engineDimensions;
+    const renderOptions = maskDragging
+      ? {
+          cacheSuffix: `drag_${maskDimensions.width}x${maskDimensions.height}`,
+          featherScale: dragScale,
+          maxFeatherQualityScale: 0.5,
+        }
+      : undefined;
+
+    // Find clips at current playhead position that have masks
+    // Don't rely on layers (generated by render loop, may be stale during comp switch)
+    const clipsAtTime = clips.filter(c =>
+      effectivePlayheadPosition >= c.startTime && effectivePlayheadPosition < c.startTime + c.duration
+    );
+
+    // Process all clips at current time (both with and without masks)
+    // Clips without masks need processing to clear stale mask textures
+    let changed = false;
+    for (const clip of clipsAtTime) {
+      const clipLocalTime = effectivePlayheadPosition - clip.startTime;
+      const masks = getInterpolatedMasks(clip.id, clipLocalTime);
+      // Process main clip's mask (or clear if no masks)
+      changed = processClipMask({ id: clip.id, masks }, maskDimensions, renderOptions) || changed;
+
+      // Process nested clips' masks if this is a nested composition
+      if (clip.nestedClips && clip.nestedClips.length > 0) {
+        const clipTime = clipLocalTime;
+        for (const nestedClip of clip.nestedClips) {
+          // Check if nested clip is active at current time within the nested comp
+          if (clipTime >= nestedClip.startTime && clipTime < nestedClip.startTime + nestedClip.duration) {
+            const nestedClipLocalTime = clipTime - nestedClip.startTime;
+            const nestedMasks = getInterpolatedMasks(nestedClip.id, nestedClipLocalTime);
+            changed = processClipMask({ id: nestedClip.id, masks: nestedMasks }, maskDimensions, renderOptions) || changed;
+          }
+        }
+      }
+    }
+    if (changed) {
+      engine.requestRender();
+    }
+  }, [processClipMask]);
+
+  useEffect(() => {
+    if (!isEngineReady) return;
+
+    // Initial mask texture generation on engine ready (handles page refresh)
+    // Without this, masks don't show after refresh because clips don't "change"
+    updateMaskTextures();
+
+    // Subscribe to clips changes (mask shape updates)
+    // This runs when clips array changes (including mask modifications)
+    const unsubscribeClips = useTimelineStore.subscribe(
+      (state) => state.clips,
+      () => updateMaskTextures()
+    );
+
+    // NOTE: Removed playheadPosition subscription - it was causing updateMaskTextures()
+    // to run every frame during playback (~60x/sec), causing frame drops.
+    // Mask textures are now updated in the render loop only when needed.
+
+    // Subscribe to tracks changes separately
+    // This runs when track structure changes (rare)
+    const unsubscribeTracks = useTimelineStore.subscribe(
+      (state) => state.tracks,
+      () => updateMaskTextures()
+    );
+
+    const unsubscribeKeyframes = useTimelineStore.subscribe(
+      (state) => state.clipKeyframes,
+      () => updateMaskTextures()
+    );
+
+    // Subscribe to composition changes
+    // When switching compositions, we need to regenerate mask textures for the new comp
+    // This handles nested comp masks showing correctly when returning to parent comp
+    const unsubscribeComp = useMediaStore.subscribe(
+      (state) => state.activeCompositionId,
+      () => {
+        // Clear mask version cache to force regeneration for the new composition
+        maskVersionRef.current.clear();
+        updateMaskTextures();
+      }
+    );
+
+    // Subscribe to maskDragging changes
+    // When drag ends (maskDragging: true -> false), regenerate mask textures
+    let wasDragging = false;
+    const unsubscribeDragging = useTimelineStore.subscribe(
+      (state) => state.maskDragging,
+      (maskDragging) => {
+        if (wasDragging && !maskDragging) {
+          // Drag just ended - force texture regeneration only for the active clip
+          const { activeMaskId, clips } = useTimelineStore.getState();
+          if (activeMaskId) {
+            const activeClip = clips.find(c => c.masks?.some(m => m.id === activeMaskId));
+            if (activeClip) {
+              maskVersionRef.current.delete(activeClip.id);
+            }
+          }
+          updateMaskTextures(true);
+        }
+        wasDragging = maskDragging;
+      }
+    );
+
+    // Subscribe to SAM2 live mask changes
+    const unsubscribeSAM2 = useSAM2Store.subscribe(
+      (state) => state.liveMask,
+      () => {
+        // Force regeneration when SAM2 mask changes
+        const clipId = useSAM2Store.getState().currentClipId;
+        if (clipId) maskVersionRef.current.delete(clipId);
+        updateMaskTextures();
+      }
+    );
+
+    return () => {
+      unsubscribeClips();
+      unsubscribeTracks();
+      unsubscribeKeyframes();
+      unsubscribeComp();
+      unsubscribeDragging();
+      unsubscribeSAM2();
+    };
+  }, [isEngineReady, updateMaskTextures]);
+
+  // Update engine playing/scrubbing state for frame rate limiting
+  useEffect(() => {
+    if (!isEngineReady) return;
+    engine.setIsPlaying(isPlaying);
+  }, [isEngineReady, isPlaying]);
+
+  useEffect(() => {
+    if (!isEngineReady) return;
+    const unsub = useTimelineStore.subscribe(
+      (state) => state.isDraggingPlayhead,
+      (isDragging) => { engine.setIsScrubbing(isDragging); }
+    );
+    return unsub;
+  }, [isEngineReady]);
+
+  // Render loop - optimized with direct layer building (bypasses React state)
+  useEffect(() => {
+    if (!isEngineReady) return;
+
+    let lastPlayhead = -1;
+
+    // Move expensive stats collection out of the RAF callback.
+    // getPlaybackDebugStats + framePhaseMonitor.summary() can take 1-5ms+
+    // (copies/filters/sorts up to 5000 events + 7 array sorts).
+    // Running this inside RAF blocks the render path and causes frame drops.
+    const statsInterval = setInterval(() => {
+      try {
+        const stats = engine.getStats();
+        useEngineStore.getState().setEngineStats({
+          ...stats,
+          playback: getPlaybackDebugStats(stats.decoder),
+          mainThread: framePhaseMonitor.summary(),
+        });
+      } catch (_e) {
+        // Ignore stats errors - non-critical
+      }
+    }, 1000);
+
+    const renderFrame = () => {
+      const frameStart = performance.now();
+      let buildMs = 0;
+      let renderMs = 0;
+      let syncVideoMs = 0;
+      let syncAudioMs = 0;
+      let cacheMs = 0;
+
+      const recordFramePhases = (mode: 'live' | 'cached' | 'skipped') => {
+        framePhaseMonitor.record({
+          mode,
+          statsMs: 0,
+          buildMs,
+          renderMs,
+          syncVideoMs,
+          syncAudioMs,
+          cacheMs,
+          totalMs: performance.now() - frameStart,
+        });
+      };
+
+      try {
+
+        // Use high-frequency playhead position during playback
+        const currentPlayhead = playheadState.isUsingInternalPosition
+          ? playheadState.position
+          : useTimelineStore.getState().playheadPosition;
+
+        // Track playhead changes for idle detection
+        // During playback, playhead constantly changes -> keeps engine active
+        // When stopped/scrubbing, only renders when playhead actually moves
+        if (currentPlayhead !== lastPlayhead) {
+          lastPlayhead = currentPlayhead;
+          engine.requestRender();
+        }
+
+        const hasMaskKeyframes = Array.from(useTimelineStore.getState().clipKeyframes.values())
+          .some(keyframes => keyframes.some(keyframe => keyframe.property.startsWith('mask.')));
+        if (hasMaskKeyframes) {
+          updateMaskTextures(false, currentPlayhead);
+        }
+
+        // Keep engine awake when background layers are playing (independent of global playhead)
+        if (layerPlaybackManager.hasActiveLayers()) {
+          engine.requestRender();
+        }
+
+        // Try cached RAM Preview frame first (instant scrubbing over pre-rendered frames)
+        if (engine.renderCachedFrame(currentPlayhead)) {
+          const syncAudioStart = performance.now();
+          layerBuilder.syncAudioElements();
+          syncAudioMs += performance.now() - syncAudioStart;
+          recordFramePhases('cached');
+          return;
+        }
+
+        // Skip live rendering during RAM Preview generation
+        if (useTimelineStore.getState().isRamPreviewing) {
+          recordFramePhases('skipped');
+          return;
+        }
+
+        // Build layers directly from stores (single source of truth)
+        const syncVideoStart = performance.now();
+        layerBuilder.syncVideoElements();
+        syncVideoMs += performance.now() - syncVideoStart;
+
+        // Share pre-built layers with renderScheduler so multi-preview
+        // can reuse them instead of re-evaluating and re-seeking videos
+        const buildStart = performance.now();
+        const layers = layerBuilder.buildLayersFromStore();
+        buildMs += performance.now() - buildStart;
+
+        // During playback: sync video elements FIRST so advanceToTime() prepares the
+        // correct VideoFrame before rendering. This eliminates the systematic 1-frame lag
+        // where we'd render before the frame was ready.
+        // During scrubbing (not playing): render FIRST for page-reload robustness.
+        // After a page reload the scrubbing cache is empty and the video is at its
+        // previous position (not yet seeking), so importExternalTexture succeeds and
+        // populates the cache. The 'seeked' event then triggers a re-render with the
+        // correct frame.
+        // Always sync video BEFORE render — ensures the current frame is
+        // at the right position before we import textures and composite.
+        // Previously, scrubbing rendered first (stale frame) then seeked after,
+        // causing 1-frame-late display. The RVFC re-render handles page-reload
+        // robustness (GPU surface cold → warmup play/pause → RVFC triggers render).
+        renderScheduler.setActiveCompLayers(layers);
+
+        const renderStart = performance.now();
+        engine.render(layers);
+        renderMs += performance.now() - renderStart;
+
+        // Audio sync after render (video and audio now see same playhead)
+        const syncAudioStart = performance.now();
+        layerBuilder.syncAudioElements();
+        syncAudioMs += performance.now() - syncAudioStart;
+
+        // Cache rendered frame for instant scrubbing (like Premiere's playback caching)
+        // Don't cache during active playback - GPU readback (mapAsync GPUMapMode.READ)
+        // is a GPU→CPU sync point that stalls the main thread for 50-275ms on Windows
+        // D3D12, causing severe frame drops. Only cache when NOT playing (e.g., manual
+        // scrubbing or dedicated RAM preview generation pass via isRamPreviewing).
+        const cacheStart = performance.now();
+        const { ramPreviewEnabled, addCachedFrame } = useTimelineStore.getState();
+        const { isDraggingPlayhead } = useTimelineStore.getState();
+        if (ramPreviewEnabled && !isPlaying && !isDraggingPlayhead) {
+          engine.cacheCompositeFrame(currentPlayhead).then(() => {
+            addCachedFrame(currentPlayhead);
+          });
+        }
+
+        // Cache active comp output for parent preview texture sharing
+        // This allows parent compositions to show the active comp without video conflicts
+        const activeCompId = useMediaStore.getState().activeCompositionId;
+        if (activeCompId && !isPlaying && !isDraggingPlayhead) {
+          engine.cacheActiveCompOutput(activeCompId);
+        }
+        cacheMs += performance.now() - cacheStart;
+        recordFramePhases('live');
+      } catch (e) {
+        recordFramePhases('skipped');
+        log.error('Render error', e);
+      }
+    };
+
+    // Always keep the engine running - it has idle detection to save power
+    // when nothing changes. Stopping the engine breaks scrubbing.
+    engine.start(renderFrame);
+    playbackHealthMonitor.start();
+
+    return () => {
+      clearInterval(statsInterval);
+      engine.stop();
+      playbackHealthMonitor.stop();
+    };
+  }, [isEngineReady, isPlaying, updateMaskTextures]);
+
+  // Subscribe to state changes that require re-render (wake from idle)
+  useEffect(() => {
+    if (!isEngineReady) return;
+
+    // Playhead position changes (scrubbing, playback)
+    const unsubPlayhead = useTimelineStore.subscribe(
+      (state) => state.playheadPosition,
+      () => engine.requestRender()
+    );
+
+    // Clips changes (content, transforms, effects, etc.)
+    const unsubClips = useTimelineStore.subscribe(
+      (state) => state.clips,
+      () => {
+        if (!useTimelineStore.getState().maskDragging) {
+          engine.requestRender();
+        }
+      }
+    );
+
+    // Track changes
+    const unsubTracks = useTimelineStore.subscribe(
+      (state) => state.tracks,
+      () => engine.requestRender()
+    );
+
+    // Layer changes in timeline store
+    const unsubLayers = useTimelineStore.subscribe(
+      (state) => state.layers,
+      () => engine.requestRender()
+    );
+
+    // Settings changes (preview quality)
+    const unsubSettings = useSettingsStore.subscribe(
+      (state) => state.previewQuality,
+      () => engine.requestRender()
+    );
+
+    // Active composition changes
+    const unsubActiveComp = useMediaStore.subscribe(
+      (state) => state.activeCompositionId,
+      () => engine.requestRender()
+    );
+
+    // Active layer slots changes (multi-layer playback)
+    const unsubLayerSlots = useMediaStore.subscribe(
+      (state) => state.activeLayerSlots,
+      () => engine.requestRender()
+    );
+
+    // Slot grid mode changes alter the main preview render path.
+    const unsubSlotGridProgress = useTimelineStore.subscribe(
+      (state) => state.slotGridProgress,
+      () => engine.requestRender()
+    );
+
+    // Layer opacity changes (per-layer opacity sliders in slot view)
+    const unsubLayerOpacities = useMediaStore.subscribe(
+      (state) => state.layerOpacities,
+      () => engine.requestRender()
+    );
+
+    return () => {
+      unsubPlayhead();
+      unsubClips();
+      unsubTracks();
+      unsubLayers();
+      unsubSettings();
+      unsubActiveComp();
+      unsubLayerSlots();
+      unsubSlotGridProgress();
+      unsubLayerOpacities();
+    };
+  }, [isEngineReady]);
+
+  const createOutputWindow = useCallback((name: string) => {
+    const id = `output_${Date.now()}`;
+    return engine.createOutputWindow(id, name);
+  }, []);
+
+  const closeOutputWindow = useCallback((id: string) => {
+    engine.closeOutputWindow(id);
+  }, []);
+
+  const restoreOutputWindow = useCallback((id: string) => {
+    return engine.restoreOutputWindow(id);
+  }, []);
+
+  const removeOutputTarget = useCallback((id: string) => {
+    engine.removeOutputTarget(id);
+  }, []);
+
+  return {
+    canvasRef,
+    isEngineReady,
+    isPlaying,
+    createOutputWindow,
+    closeOutputWindow,
+    restoreOutputWindow,
+    removeOutputTarget,
+  };
+}

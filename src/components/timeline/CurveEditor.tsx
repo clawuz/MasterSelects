@@ -1,0 +1,705 @@
+// Curve Editor component for keyframe animation curves with bezier handles
+
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import { parseCameraProperty, parseMaskProperty, type AnimatableProperty, type Keyframe, type BezierHandle, type EasingType, type TimelineClip } from '../../types';
+import { PRESET_BEZIER } from '../../utils/keyframeInterpolation';
+import {
+  formatVectorAnimationStateLabel,
+  getVectorAnimationStateLabelAtIndex,
+  parseVectorAnimationInputProperty,
+  parseVectorAnimationStateProperty,
+} from '../../types/vectorAnimation';
+import { BEZIER_HANDLE_SIZE } from '../../stores/timeline/constants';
+import { useTimelineStore } from '../../stores/timeline';
+import { useMediaStore } from '../../stores/mediaStore';
+
+const CURVE_KEYFRAME_SNAP_THRESHOLD_PX = 10;
+const EMPTY_CLIP_KEYFRAMES: Keyframe[] = [];
+
+function findClipById(clips: TimelineClip[], clipId: string): TimelineClip | undefined {
+  for (const clip of clips) {
+    if (clip.id === clipId) {
+      return clip;
+    }
+    if (clip.nestedClips?.length) {
+      const nestedClip = findClipById(clip.nestedClips, clipId);
+      if (nestedClip) {
+        return nestedClip;
+      }
+    }
+  }
+  return undefined;
+}
+
+export interface CurveEditorProps {
+  trackId: string;
+  clipId: string;
+  property: AnimatableProperty;
+  keyframes: Keyframe[];
+  clipStartTime: number;
+  clipDuration: number;
+  width: number;
+  selectedKeyframeIds: Set<string>;
+  onSelectKeyframe: (id: string, addToSelection: boolean) => void;
+  onMoveKeyframe: (id: string, newTime: number, newValue: number) => void;
+  onUpdateBezierHandle: (keyframeId: string, handle: 'in' | 'out', position: BezierHandle) => void;
+  timeToPixel: (time: number) => number;
+  pixelToTime: (pixel: number) => number;
+}
+
+// Get default range for a property type (used as fallback when no keyframes exist)
+function getPropertyDefaults(property: AnimatableProperty): { min: number; max: number; fallbackPad: number } {
+  const maskProperty = parseMaskProperty(property);
+  if (maskProperty?.property === 'path') {
+    return { min: 0, max: 1, fallbackPad: 0.05 };
+  }
+  if (maskProperty?.property === 'position.x' || maskProperty?.property === 'position.y') {
+    return { min: -1, max: 1, fallbackPad: 0.05 };
+  }
+  if (maskProperty?.property === 'feather') {
+    return { min: 0, max: 500, fallbackPad: 5 };
+  }
+  if (maskProperty?.property === 'featherQuality') {
+    return { min: 1, max: 100, fallbackPad: 5 };
+  }
+  const cameraProperty = parseCameraProperty(property);
+  if (cameraProperty === 'fov') {
+    return { min: 10, max: 140, fallbackPad: 2 };
+  }
+  if (cameraProperty === 'near') {
+    return { min: 0.001, max: 10, fallbackPad: 0.1 };
+  }
+  if (cameraProperty === 'far') {
+    return { min: 1, max: 1000, fallbackPad: 10 };
+  }
+  if (parseVectorAnimationStateProperty(property)) {
+    return { min: 0, max: 1, fallbackPad: 0 };
+  }
+  if (property === 'opacity') {
+    return { min: 0, max: 1, fallbackPad: 0.05 };
+  }
+  if (property.startsWith('scale.')) {
+    return { min: 0, max: 2, fallbackPad: 0.05 };
+  }
+  if (property.startsWith('rotation.')) {
+    return { min: -360, max: 360, fallbackPad: 5 };
+  }
+  if (property.startsWith('position.')) {
+    return { min: -1000, max: 1000, fallbackPad: 10 };
+  }
+  if (parseVectorAnimationInputProperty(property)) {
+    return { min: 0, max: 1, fallbackPad: 0.05 };
+  }
+  // Effect properties
+  return { min: -100, max: 100, fallbackPad: 5 };
+}
+
+// Calculate a "nice" step size for grid lines that produces clean label values
+function niceStep(range: number, targetLines: number = 5): number {
+  if (range <= 0) return 1;
+  const roughStep = range / targetLines;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(roughStep)));
+  const normalized = roughStep / magnitude;
+
+  let nice: number;
+  if (normalized <= 1) nice = 1;
+  else if (normalized <= 2) nice = 2;
+  else if (normalized <= 5) nice = 5;
+  else nice = 10;
+
+  return nice * magnitude;
+}
+
+// Compute auto-range that always fits tightly to actual keyframe values
+function computeAutoRange(keyframes: Keyframe[], property: AnimatableProperty): { min: number; max: number } {
+  const defaults = getPropertyDefaults(property);
+
+  if (keyframes.length === 0) {
+    return { min: defaults.min, max: defaults.max };
+  }
+
+  const values = keyframes.map(k => k.value);
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+
+  const range = max - min;
+
+  if (range > 0) {
+    // Add 10% padding so curve doesn't touch top/bottom edges
+    const pad = range * 0.1;
+    min -= pad;
+    max += pad;
+  } else {
+    // All values identical — create a small range around the value
+    const pad = Math.max(Math.abs(min) * 0.1, defaults.fallbackPad) || 1;
+    min -= pad;
+    max += pad;
+  }
+
+  return { min, max };
+}
+
+// Generate SVG path for bezier curve between two keyframes
+function generateBezierPath(
+  prevKf: Keyframe,
+  nextKf: Keyframe,
+  timeToX: (time: number) => number,
+  valueToY: (value: number) => number
+): string {
+  const x1 = timeToX(prevKf.time);
+  const y1 = valueToY(prevKf.value);
+  const x2 = timeToX(nextKf.time);
+  const y2 = valueToY(nextKf.value);
+
+  const timeDelta = nextKf.time - prevKf.time;
+  const valueDelta = nextKf.value - prevKf.value;
+
+  // Get control points
+  let cp1x: number, cp1y: number, cp2x: number, cp2y: number;
+
+  if (prevKf.easing === 'bezier' || prevKf.handleOut || nextKf.handleIn) {
+    // Use custom handles
+    const handleOut = prevKf.handleOut || { x: timeDelta / 3, y: valueDelta / 3 };
+    const handleIn = nextKf.handleIn || { x: -timeDelta / 3, y: -valueDelta / 3 };
+
+    cp1x = timeToX(prevKf.time + handleOut.x);
+    cp1y = valueToY(prevKf.value + handleOut.y);
+    cp2x = timeToX(nextKf.time + handleIn.x);
+    cp2y = valueToY(nextKf.value + handleIn.y);
+  } else {
+    // Use preset easing
+    const preset = PRESET_BEZIER[prevKf.easing as Exclude<EasingType, 'bezier'>] || PRESET_BEZIER.linear;
+
+    cp1x = x1 + (x2 - x1) * preset.p1[0];
+    cp1y = y1 + (y2 - y1) * preset.p1[1];
+    cp2x = x1 + (x2 - x1) * preset.p2[0];
+    cp2y = y1 + (y2 - y1) * preset.p2[1];
+  }
+
+  return `M ${x1} ${y1} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${x2} ${y2}`;
+}
+
+function generateStepPath(
+  prevKf: Keyframe,
+  nextKf: Keyframe,
+  timeToX: (time: number) => number,
+  valueToY: (value: number) => number,
+): string {
+  const x1 = timeToX(prevKf.time);
+  const y1 = valueToY(prevKf.value);
+  const x2 = timeToX(nextKf.time);
+  const y2 = valueToY(nextKf.value);
+  return `M ${x1} ${y1} L ${x2} ${y1} L ${x2} ${y2}`;
+}
+
+export const CurveEditor: React.FC<CurveEditorProps> = ({
+  trackId: _trackId,
+  clipId,
+  property,
+  keyframes,
+  clipStartTime,
+  clipDuration,
+  width,
+  selectedKeyframeIds,
+  onSelectKeyframe,
+  onMoveKeyframe,
+  onUpdateBezierHandle,
+  timeToPixel,
+  pixelToTime,
+}) => {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [dragState, setDragState] = useState<{
+    type: 'keyframe' | 'handle-in' | 'handle-out';
+    keyframeId: string;
+    startX: number;
+    startY: number;
+    startTime: number;
+    startValue: number;
+    startHandleX?: number;
+    startHandleY?: number;
+  } | null>(null);
+
+  const height = useTimelineStore(s => s.curveEditorHeight);
+  const setCurveEditorHeight = useTimelineStore(s => s.setCurveEditorHeight);
+  const allClipKeyframes = useTimelineStore(s => s.clipKeyframes.get(clipId) ?? EMPTY_CLIP_KEYFRAMES);
+  const timelineClips = useTimelineStore(s => s.clips);
+  const mediaFiles = useMediaStore(s => s.files);
+  const padding = useMemo(() => ({ top: 20, right: 10, bottom: 20, left: 10 }), []);
+  const stateProperty = parseVectorAnimationStateProperty(property);
+  const stateMachineName = stateProperty?.stateMachineName;
+  const stateNames = useMemo(() => {
+    if (!stateMachineName) {
+      return [];
+    }
+    const clip = findClipById(timelineClips, clipId);
+    const mediaFileId = clip?.mediaFileId ?? clip?.source?.mediaFileId;
+    if (!mediaFileId) {
+      return [];
+    }
+    return mediaFiles.find((file) => file.id === mediaFileId)
+      ?.vectorAnimation
+      ?.stateMachineStates
+      ?.[stateMachineName] ?? [];
+  }, [clipId, mediaFiles, stateMachineName, timelineClips]);
+  const isDiscreteStateProperty = Boolean(stateMachineName && stateNames.length > 0);
+
+  const getClampedSvgPoint = useCallback((clientX: number, clientY: number) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+
+    const svgWidth = rect.width || width;
+    const svgHeight = rect.height || height;
+
+    return {
+      x: Math.max(0, Math.min(clientX - rect.left, svgWidth)),
+      y: Math.max(0, Math.min(clientY - rect.top, svgHeight)),
+    };
+  }, [height, width]);
+
+  // Sort keyframes by time
+  const sortedKeyframes = useMemo(() =>
+    [...keyframes].sort((a, b) => a.time - b.time),
+    [keyframes]
+  );
+
+  // Compute value range
+  const valueRange = useMemo(() => {
+    if (isDiscreteStateProperty) {
+      return { min: 0, max: Math.max(1, stateNames.length - 1) };
+    }
+    return computeAutoRange(sortedKeyframes, property);
+  }, [isDiscreteStateProperty, sortedKeyframes, property, stateNames.length]);
+
+  // Convert time to X position (absolute coords — parent handles scrolling via translateX)
+  const timeToX = useCallback((time: number) => {
+    return timeToPixel(clipStartTime + time);
+  }, [timeToPixel, clipStartTime]);
+
+  // Convert X position to time
+  const xToTime = useCallback((x: number) => {
+    return pixelToTime(x) - clipStartTime;
+  }, [pixelToTime, clipStartTime]);
+
+  // Convert value to Y position (inverted because SVG Y goes down)
+  const valueToY = useCallback((value: number) => {
+    const range = valueRange.max - valueRange.min;
+    const normalized = (value - valueRange.min) / range;
+    return height - padding.bottom - normalized * (height - padding.top - padding.bottom);
+  }, [valueRange, height, padding]);
+
+  // Convert Y position to value
+  const yToValue = useCallback((y: number) => {
+    const range = valueRange.max - valueRange.min;
+    const normalized = (height - padding.bottom - y) / (height - padding.top - padding.bottom);
+    return valueRange.min + normalized * range;
+  }, [valueRange, height, padding]);
+
+  const snapTimeToClipKeyframe = useCallback((time: number, keyframeId: string) => {
+    const targets = allClipKeyframes.length > 0 ? allClipKeyframes : sortedKeyframes;
+    const proposedPixel = timeToPixel(clipStartTime + time);
+    let snappedTime = time;
+    let bestDistancePx = CURVE_KEYFRAME_SNAP_THRESHOLD_PX;
+
+    for (const target of targets) {
+      if (target.id === keyframeId) continue;
+
+      const distancePx = Math.abs(timeToPixel(clipStartTime + target.time) - proposedPixel);
+      if (distancePx <= bestDistancePx) {
+        bestDistancePx = distancePx;
+        snappedTime = target.time;
+      }
+    }
+
+    return snappedTime;
+  }, [allClipKeyframes, sortedKeyframes, timeToPixel, clipStartTime]);
+
+  // Generate grid lines with adaptive step size
+  const gridLines = useMemo(() => {
+    const lines: { y: number; value: number; major: boolean; label?: string }[] = [];
+    if (isDiscreteStateProperty) {
+      stateNames.forEach((stateName, index) => {
+        lines.push({
+          y: valueToY(index),
+          value: index,
+          major: true,
+          label: formatVectorAnimationStateLabel(stateName),
+        });
+      });
+      return lines;
+    }
+
+    const range = valueRange.max - valueRange.min;
+    const step = niceStep(range);
+
+    for (let value = Math.ceil(valueRange.min / step) * step; value <= valueRange.max; value += step) {
+      lines.push({
+        y: valueToY(value),
+        value,
+        major: Math.abs(value) < 0.001 || value % (step * 2) === 0,
+      });
+    }
+
+    return lines;
+  }, [isDiscreteStateProperty, stateNames, valueRange, valueToY]);
+
+  // Handle mouse down on keyframe
+  const handleKeyframeMouseDown = useCallback((e: React.MouseEvent, kf: Keyframe) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    onSelectKeyframe(kf.id, e.shiftKey);
+
+    setDragState({
+      type: 'keyframe',
+      keyframeId: kf.id,
+      startX: e.clientX,
+      startY: e.clientY,
+      startTime: kf.time,
+      startValue: kf.value,
+    });
+  }, [onSelectKeyframe]);
+
+  // Handle mouse down on bezier handle
+  const handleHandleMouseDown = useCallback((e: React.MouseEvent, kf: Keyframe, handleType: 'in' | 'out') => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const prevKf = sortedKeyframes.find((_k, i) =>
+      i < sortedKeyframes.length - 1 && sortedKeyframes[i + 1].id === kf.id
+    );
+    const nextKf = sortedKeyframes.find((_k, i) =>
+      i > 0 && sortedKeyframes[i - 1].id === kf.id
+    );
+
+    let handle: BezierHandle;
+    if (handleType === 'in') {
+      const defaultX = prevKf ? -(kf.time - prevKf.time) / 3 : -0.1;
+      const defaultY = prevKf ? -(kf.value - prevKf.value) / 3 : 0;
+      handle = kf.handleIn || { x: defaultX, y: defaultY };
+    } else {
+      const defaultX = nextKf ? (nextKf.time - kf.time) / 3 : 0.1;
+      const defaultY = nextKf ? (nextKf.value - kf.value) / 3 : 0;
+      handle = kf.handleOut || { x: defaultX, y: defaultY };
+    }
+
+    setDragState({
+      type: handleType === 'in' ? 'handle-in' : 'handle-out',
+      keyframeId: kf.id,
+      startX: e.clientX,
+      startY: e.clientY,
+      startTime: kf.time,
+      startValue: kf.value,
+      startHandleX: handle.x,
+      startHandleY: handle.y,
+    });
+  }, [sortedKeyframes]);
+
+  // Handle right-click on bezier handle - reset to default
+  const handleHandleContextMenu = useCallback((e: React.MouseEvent, kf: Keyframe, handleType: 'in' | 'out') => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const kfIndex = sortedKeyframes.findIndex(k => k.id === kf.id);
+    const prevKf = kfIndex > 0 ? sortedKeyframes[kfIndex - 1] : null;
+    const nextKf = kfIndex < sortedKeyframes.length - 1 ? sortedKeyframes[kfIndex + 1] : null;
+
+    // Calculate default handle position (1/3 of the distance to neighboring keyframe)
+    let defaultHandle: BezierHandle;
+    if (handleType === 'in') {
+      const defaultX = prevKf ? -(kf.time - prevKf.time) / 3 : -0.1;
+      const defaultY = prevKf ? -(kf.value - prevKf.value) / 3 : 0;
+      defaultHandle = { x: defaultX, y: defaultY };
+    } else {
+      const defaultX = nextKf ? (nextKf.time - kf.time) / 3 : 0.1;
+      const defaultY = nextKf ? (nextKf.value - kf.value) / 3 : 0;
+      defaultHandle = { x: defaultX, y: defaultY };
+    }
+
+    onUpdateBezierHandle(kf.id, handleType, defaultHandle);
+  }, [sortedKeyframes, onUpdateBezierHandle]);
+
+  // Handle mouse move
+  const handleMouseMove = useCallback((clientX: number, clientY: number, shiftKey: boolean) => {
+    if (!dragState) return;
+
+    const point = getClampedSvgPoint(clientX, clientY);
+    if (!point) return;
+
+    const { x, y } = point;
+
+    if (dragState.type === 'keyframe') {
+      // Move keyframe
+      let newTime = xToTime(x);
+      let newValue = yToValue(y);
+
+      // Constrain to horizontal or vertical if shift held
+      if (shiftKey) {
+        const dx = Math.abs(clientX - dragState.startX);
+        const dy = Math.abs(clientY - dragState.startY);
+        if (dx > dy) {
+          newValue = dragState.startValue;
+        } else {
+          newTime = dragState.startTime;
+        }
+      }
+
+      // Clamp time to clip duration
+      newTime = Math.max(0, Math.min(newTime, clipDuration));
+      if (shiftKey) {
+        newTime = snapTimeToClipKeyframe(newTime, dragState.keyframeId);
+      }
+      if (isDiscreteStateProperty) {
+        newValue = Math.max(0, Math.min(stateNames.length - 1, Math.round(newValue)));
+      }
+
+      onMoveKeyframe(dragState.keyframeId, newTime, newValue);
+    } else {
+      // Move handle
+      const kf = sortedKeyframes.find(k => k.id === dragState.keyframeId);
+      if (!kf) return;
+
+      const handleTime = xToTime(x) - kf.time;
+      let handleValue = yToValue(y) - kf.value;
+
+      // Constrain handle direction
+      const isIn = dragState.type === 'handle-in';
+      const constrainedTime = isIn
+        ? Math.min(0, handleTime)  // In handle must be <= 0
+        : Math.max(0, handleTime); // Out handle must be >= 0
+
+      // Shift key: snap to horizontal (no vertical offset)
+      if (shiftKey) {
+        handleValue = 0;
+      }
+
+      onUpdateBezierHandle(dragState.keyframeId, isIn ? 'in' : 'out', {
+        x: constrainedTime,
+        y: handleValue,
+      });
+    }
+  }, [dragState, getClampedSvgPoint, xToTime, yToValue, clipDuration, onMoveKeyframe, onUpdateBezierHandle, sortedKeyframes, snapTimeToClipKeyframe, isDiscreteStateProperty, stateNames.length]);
+
+  // Handle mouse up
+  const handleMouseUp = useCallback(() => {
+    setDragState(null);
+  }, []);
+
+  useEffect(() => {
+    if (!dragState) return;
+
+    const handleWindowMouseMove = (event: MouseEvent) => {
+      if ((event.buttons & 1) !== 1) {
+        setDragState(null);
+        return;
+      }
+
+      event.preventDefault();
+      handleMouseMove(event.clientX, event.clientY, event.shiftKey);
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('blur', handleMouseUp);
+    };
+  }, [dragState, handleMouseMove, handleMouseUp]);
+
+  // Handle click on empty area
+  const handleSvgClick = useCallback((e: React.MouseEvent) => {
+    if (e.target === svgRef.current) {
+      onSelectKeyframe('', false); // Deselect
+    }
+  }, [onSelectKeyframe]);
+
+  // Shift+wheel resizes only the curve editor. Use a native capture listener so
+  // the parent timeline wheel handler cannot scroll the timeline first.
+  const handleWheel = useCallback((e: WheelEvent) => {
+    if (!e.shiftKey) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    const delta = e.deltaY > 0 ? 20 : -20;
+    setCurveEditorHeight(height + delta);
+  }, [height, setCurveEditorHeight]);
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    svg.addEventListener('wheel', handleWheel, { capture: true, passive: false });
+    return () => svg.removeEventListener('wheel', handleWheel, true);
+  }, [handleWheel]);
+
+  return (
+    <svg
+      ref={svgRef}
+      className="curve-editor-svg"
+      width={width}
+      height={height}
+      onClick={handleSvgClick}
+    >
+      {/* Background */}
+      <rect x={0} y={0} width={width} height={height} fill="var(--bg-tertiary)" />
+
+      {/* Grid lines */}
+      {gridLines.map((line, i) => (
+        <g key={i}>
+          <line
+            x1={0}
+            y1={line.y}
+            x2={width}
+            y2={line.y}
+            className={line.major ? 'curve-editor-grid-major' : 'curve-editor-grid'}
+          />
+          {line.major && (
+            <text
+              x={4}
+              y={line.y - 2}
+              className="curve-editor-value-label"
+              fontSize={9}
+              fill="var(--text-secondary)"
+            >
+              {line.label ? line.label :
+               property === 'opacity' ? `${(line.value * 100).toFixed(0)}%` :
+               parseCameraProperty(property) === 'fov' ? `${line.value.toFixed(0)}Â°` :
+               property.startsWith('scale.') ? `${(line.value * 100).toFixed(0)}%` :
+               property.startsWith('rotation.') ? `${line.value.toFixed(0)}°` :
+               Number.isInteger(line.value) ? line.value.toFixed(0) :
+               line.value.toPrecision(3)}
+            </text>
+          )}
+        </g>
+      ))}
+
+      {/* Zero line (if in range) */}
+      {valueRange.min <= 0 && valueRange.max >= 0 && (
+        <line
+          x1={0}
+          y1={valueToY(0)}
+          x2={width}
+          y2={valueToY(0)}
+          stroke="var(--text-secondary)"
+          strokeWidth={1}
+          opacity={0.5}
+        />
+      )}
+
+      {/* Curves between keyframes */}
+      {sortedKeyframes.map((kf, i) => {
+        if (i === 0) return null;
+        const prevKf = sortedKeyframes[i - 1];
+        const path = isDiscreteStateProperty
+          ? generateStepPath(prevKf, kf, timeToX, valueToY)
+          : generateBezierPath(prevKf, kf, timeToX, valueToY);
+        return (
+          <path
+            key={`curve-${prevKf.id}-${kf.id}`}
+            d={path}
+            className={`curve-editor-curve${isDiscreteStateProperty ? ' step' : ''}`}
+          />
+        );
+      })}
+
+      {/* Keyframe points and handles */}
+      {sortedKeyframes.map((kf, i) => {
+        const x = timeToX(kf.time);
+        const y = valueToY(kf.value);
+        const isSelected = selectedKeyframeIds.has(kf.id);
+
+        // Calculate handle positions
+        const prevKf = i > 0 ? sortedKeyframes[i - 1] : null;
+        const nextKf = i < sortedKeyframes.length - 1 ? sortedKeyframes[i + 1] : null;
+
+        let handleInX = 0, handleInY = 0, handleOutX = 0, handleOutY = 0;
+        let showHandleIn = false, showHandleOut = false;
+
+        if (isSelected && !isDiscreteStateProperty) {
+          if (prevKf) {
+            const defaultInX = -(kf.time - prevKf.time) / 3;
+            const defaultInY = -(kf.value - prevKf.value) / 3;
+            const handleIn = kf.handleIn || { x: defaultInX, y: defaultInY };
+            handleInX = timeToX(kf.time + handleIn.x);
+            handleInY = valueToY(kf.value + handleIn.y);
+            showHandleIn = true;
+          }
+
+          if (nextKf) {
+            const defaultOutX = (nextKf.time - kf.time) / 3;
+            const defaultOutY = (nextKf.value - kf.value) / 3;
+            const handleOut = kf.handleOut || { x: defaultOutX, y: defaultOutY };
+            handleOutX = timeToX(kf.time + handleOut.x);
+            handleOutY = valueToY(kf.value + handleOut.y);
+            showHandleOut = true;
+          }
+        }
+
+        return (
+          <g key={kf.id}>
+            {/* Handle lines (only for selected keyframes) */}
+            {showHandleIn && (
+              <line
+                x1={x}
+                y1={y}
+                x2={handleInX}
+                y2={handleInY}
+                className="curve-editor-handle-line"
+              />
+            )}
+            {showHandleOut && (
+              <line
+                x1={x}
+                y1={y}
+                x2={handleOutX}
+                y2={handleOutY}
+                className="curve-editor-handle-line"
+              />
+            )}
+
+            {/* Handle circles (only for selected keyframes) */}
+            {showHandleIn && (
+              <circle
+                cx={handleInX}
+                cy={handleInY}
+                r={BEZIER_HANDLE_SIZE / 2}
+                className="curve-editor-handle"
+                onMouseDown={(e) => handleHandleMouseDown(e, kf, 'in')}
+                onContextMenu={(e) => handleHandleContextMenu(e, kf, 'in')}
+              />
+            )}
+            {showHandleOut && (
+              <circle
+                cx={handleOutX}
+                cy={handleOutY}
+                r={BEZIER_HANDLE_SIZE / 2}
+                className="curve-editor-handle"
+                onMouseDown={(e) => handleHandleMouseDown(e, kf, 'out')}
+                onContextMenu={(e) => handleHandleContextMenu(e, kf, 'out')}
+              />
+            )}
+
+            {/* Keyframe point */}
+            <circle
+              cx={x}
+              cy={y}
+              r={5}
+              className={`curve-editor-keyframe ${isSelected ? 'selected' : ''}${isDiscreteStateProperty ? ' state-change' : ''}`}
+              onMouseDown={(e) => handleKeyframeMouseDown(e, kf)}
+              aria-label={isDiscreteStateProperty ? getVectorAnimationStateLabelAtIndex(stateNames, kf.value) : undefined}
+            />
+          </g>
+        );
+      })}
+    </svg>
+  );
+};
+
+export default CurveEditor;

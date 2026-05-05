@@ -1,0 +1,93 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+dist-ssr
+*.tsbuildinfo
+.cache
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment
+.env
+.dev.vars
+.env.local
+.env.*.local
+*.local
+
+# Testing
+coverage
+*.lcov
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp
+temp
+*.tmp
+tmp_*.png
+
+# FFmpeg WASM build outputs (build artifacts, not the final WASM)
+ffmpeg-wasm-build/build/
+ffmpeg-wasm-build/dist/
+ffmpeg-wasm-build/build.log
+
+# Terminal state (Claude Code)
+.terminal_*
+
+# Test videos (large files - keep out of git)
+public/test-videos/
+
+# Rust build artifacts
+tools/helpers/*/target/
+tools/native-helper/target/
+helpers/*/target/
+masterselects-helper/
+
+# Native helper - bundled FFmpeg binaries (too large for git)
+tools/native-helper/ffmpeg/
+
+# Browser automation logs
+.browser-logs.json
+.wrangler/
+
+# AI Bridge session token (generated per dev session)
+.ai-bridge-token
+
+# Native helper release/package artifacts
+tools/native-helper/MasterSelects-NativeHelper-v*-windows-x64.msi
+tools/native-helper/MasterSelects-NativeHelper-v*-windows-x64.wixpdb
+tools/native-helper/icon.ico
+
+# Project folders (user media)
+Wonder/
+_fremd/
+
+# Python virtual environments
+**/venv/
+
+# Windows artifacts
+nul
+.gstack/

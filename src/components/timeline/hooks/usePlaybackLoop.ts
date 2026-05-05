@@ -1,0 +1,205 @@
+// Playback loop with audio master clock synchronization
+
+import { useEffect } from 'react';
+import { useTimelineStore } from '../../../stores/timeline';
+import {
+  clearInternalPlaybackHold,
+  playheadState,
+} from '../../../services/layerBuilder';
+import { findStopMarkerInPlaybackRange } from '../../../services/timeline/stopMarkers';
+
+interface UsePlaybackLoopProps {
+  isPlaying: boolean;
+}
+
+/**
+ * Audio Master Clock playback loop
+ * Audio runs freely without correction, playhead follows audio time
+ * This eliminates audio drift and clicking from constant seeks
+ */
+export function usePlaybackLoop({ isPlaying }: UsePlaybackLoopProps) {
+  useEffect(() => {
+    if (!isPlaying) {
+      // Sync store to final internal position before disabling —
+      // prevents frame jump-back caused by stale 33ms-throttled store value
+      if (playheadState.isUsingInternalPosition) {
+        useTimelineStore.setState({ playheadPosition: playheadState.position });
+      }
+      clearInternalPlaybackHold();
+      playheadState.isUsingInternalPosition = false;
+      playheadState.hasMasterAudio = false;
+      playheadState.masterAudioElement = null;
+      return;
+    }
+
+    let rafId: number;
+    let lastTime = performance.now();
+    let lastStateUpdate = 0;
+    const STATE_UPDATE_INTERVAL = 33; // Update store every 33ms (~30fps for UI/subscribers)
+
+    // Initialize internal position from store and enable high-frequency mode
+    playheadState.position = useTimelineStore.getState().playheadPosition;
+    playheadState.isUsingInternalPosition = true;
+    playheadState.playbackJustStarted = true; // Signal for initial audio sync
+
+    const stopPlaybackAt = (position: number) => {
+      const timelineStore = useTimelineStore.getState();
+      timelineStore.pause();
+      clearInternalPlaybackHold();
+      playheadState.position = position;
+      playheadState.isUsingInternalPosition = false;
+      playheadState.hasMasterAudio = false;
+      playheadState.masterAudioElement = null;
+      useTimelineStore.setState({
+        playheadPosition: position,
+        playbackSpeed: 1,
+      });
+    };
+
+    const updatePlayhead = (currentTime: number) => {
+      try {
+        const state = useTimelineStore.getState();
+        const {
+          duration: dur,
+          inPoint: ip,
+          outPoint: op,
+          loopPlayback: lp,
+          pause: ps,
+          clips,
+          markers,
+          playbackSpeed,
+        } = state;
+        const effectiveEnd = op !== null ? op : dur;
+        const effectiveStart = ip !== null ? ip : 0;
+        const previousPosition = playheadState.position;
+
+        let newPosition: number;
+        const heldPlaybackPosition = playheadState.heldPlaybackPosition;
+
+        if (heldPlaybackPosition !== null) {
+          newPosition = heldPlaybackPosition;
+          lastTime = currentTime;
+        } else if (playheadState.hasMasterAudio && playheadState.masterAudioElement && playbackSpeed === 1) {
+          // AUDIO MASTER CLOCK: If we have an active audio element, derive playhead from its time.
+          // Only use audio master for normal forward playback (speed === 1).
+          const audio = playheadState.masterAudioElement;
+          if (!audio.paused && audio.readyState >= 2) {
+            // Calculate timeline position from audio's current time
+            // audioTime = clipInPoint + (timelinePosition - clipStartTime) * speed
+            // So: timelinePosition = clipStartTime + (audioTime - clipInPoint) / speed
+            const audioTime = audio.currentTime;
+            const speed = playheadState.masterClipSpeed || 1;
+            newPosition =
+              playheadState.masterClipStartTime +
+              (audioTime - playheadState.masterClipInPoint) / speed;
+          } else {
+            // Audio paused or not ready, fall back to system time
+            const deltaTime = (currentTime - lastTime) / 1000;
+            const cappedDelta = Math.min(deltaTime, 0.1);
+            newPosition = playheadState.position + cappedDelta * playbackSpeed;
+          }
+        } else {
+          // No audio master or non-standard speed - use system time with playback speed
+          const deltaTime = (currentTime - lastTime) / 1000;
+          const cappedDelta = Math.min(deltaTime, 0.1);
+          newPosition = playheadState.position + cappedDelta * playbackSpeed;
+        }
+        lastTime = currentTime;
+
+        const stopMarker = findStopMarkerInPlaybackRange(markers, previousPosition, newPosition);
+        if (stopMarker) {
+          stopPlaybackAt(stopMarker.time);
+          return;
+        }
+
+        // Handle end of timeline / looping (forward playback)
+        if (newPosition >= effectiveEnd && playbackSpeed > 0) {
+          if (lp) {
+            newPosition = effectiveStart;
+            // Reset audio master - will be re-established by syncAudioElements
+            playheadState.hasMasterAudio = false;
+            playheadState.masterAudioElement = null;
+            // Seek all audio/video to start
+            clips.forEach((clip) => {
+              if (clip.source?.audioElement) {
+                clip.source.audioElement.currentTime = clip.inPoint;
+              }
+              if (clip.source?.videoElement) {
+                clip.source.videoElement.currentTime = clip.reversed
+                  ? clip.outPoint
+                  : clip.inPoint;
+              }
+            });
+          } else {
+            newPosition = effectiveEnd;
+            ps();
+            stopPlaybackAt(newPosition);
+            return;
+          }
+        }
+
+        // Handle start of timeline (reverse playback)
+        if (newPosition <= effectiveStart && playbackSpeed < 0) {
+          if (lp) {
+            newPosition = effectiveEnd;
+            // Reset audio master
+            playheadState.hasMasterAudio = false;
+            playheadState.masterAudioElement = null;
+            // Seek all audio/video to end
+            clips.forEach((clip) => {
+              if (clip.source?.audioElement) {
+                clip.source.audioElement.currentTime = clip.outPoint;
+              }
+              if (clip.source?.videoElement) {
+                clip.source.videoElement.currentTime = clip.reversed
+                  ? clip.inPoint
+                  : clip.outPoint;
+              }
+            });
+          } else {
+            newPosition = effectiveStart;
+            ps();
+            stopPlaybackAt(newPosition);
+            return;
+          }
+        }
+
+        // Clamp to bounds (for edge cases)
+        if (newPosition < effectiveStart) {
+          newPosition = effectiveStart;
+        }
+        if (newPosition > effectiveEnd) {
+          newPosition = effectiveEnd;
+        }
+
+        // Update high-frequency position for render loop to read
+        playheadState.position = newPosition;
+
+        // PERFORMANCE: Only update store at throttled interval
+        if (currentTime - lastStateUpdate >= STATE_UPDATE_INTERVAL) {
+          useTimelineStore.setState({ playheadPosition: newPosition });
+          lastStateUpdate = currentTime;
+        }
+      } catch (e) {
+        // Never let the playback RAF chain break - audio would desync
+        console.error('[PlaybackLoop] Error in updatePlayhead:', e);
+      }
+
+      rafId = requestAnimationFrame(updatePlayhead);
+    };
+
+    rafId = requestAnimationFrame(updatePlayhead);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      // Sync final position to store before cleanup
+      if (playheadState.isUsingInternalPosition) {
+        useTimelineStore.setState({ playheadPosition: playheadState.position });
+      }
+      clearInternalPlaybackHold();
+      playheadState.isUsingInternalPosition = false;
+      playheadState.hasMasterAudio = false;
+      playheadState.masterAudioElement = null;
+    };
+  }, [isPlaying]);
+}

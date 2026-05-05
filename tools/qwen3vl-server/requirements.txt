@@ -1,0 +1,7 @@
+torch
+transformers
+accelerate
+qwen-vl-utils
+flask
+av
+Pillow
