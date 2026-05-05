@@ -6,6 +6,7 @@ interface TranscriptionSettingsProps {
 
 const providers: { id: TranscriptionProvider; label: string; description: string }[] = [
   { id: 'local', label: 'Local (Whisper)', description: 'Runs in browser, no API key needed. Slower, less accurate.' },
+  { id: 'cloudflare', label: 'Cloudflare Workers AI', description: 'Fast, no API key needed. Uses built-in CF AI binding.' },
   { id: 'openai', label: 'OpenAI Whisper API', description: 'High accuracy, $0.006/minute. Requires API key.' },
   { id: 'assemblyai', label: 'AssemblyAI', description: 'Excellent accuracy, speaker diarization. $0.015/minute.' },
   { id: 'deepgram', label: 'Deepgram', description: 'Fast, good accuracy. $0.0125/minute.' },

@@ -98,10 +98,17 @@ export const onRequest: AppRouteHandler = async (context: AppContext): Promise<R
   }
 
   if (context.request.method === 'OPTIONS' && new URL(context.request.url).pathname.startsWith('/api/')) {
+    const origin = context.request.headers.get('origin') ?? '';
+    const isAllowedOrigin = origin.includes('localhost') || origin.includes('masterselects');
     return new Response(null, {
       headers: {
         Allow: 'GET, POST, OPTIONS',
         'Cache-Control': 'no-store',
+        ...(isAllowedOrigin ? {
+          'Access-Control-Allow-Origin': origin,
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        } : {}),
       },
       status: 204,
     });

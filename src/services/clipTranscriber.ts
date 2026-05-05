@@ -154,8 +154,8 @@ export async function transcribeClip(clipId: string, language: string = 'auto', 
   const { transcriptionProvider, apiKeys } = useSettingsStore.getState();
   const apiKey = transcriptionProvider !== 'local' ? apiKeys[transcriptionProvider] : null;
 
-  // Validate API key if using cloud provider
-  if (transcriptionProvider !== 'local' && !apiKey) {
+  // Validate API key if using cloud provider (cloudflare uses built-in AI binding, no key needed)
+  if (transcriptionProvider !== 'local' && transcriptionProvider !== 'cloudflare' && !apiKey) {
     log.error(`No API key configured for ${transcriptionProvider}`);
     updateClipTranscript(clipId, {
       status: 'error',
@@ -249,6 +249,9 @@ export async function transcribeClip(clipId: string, language: string = 'auto', 
             break;
           case 'deepgram':
             words = await transcribeWithDeepgram(clipId, audioBlob, language, apiKey!, rangeStart);
+            break;
+          case 'cloudflare':
+            words = await transcribeWithCloudflare(clipId, audioBuffer, rangeStart);
             break;
           default:
             throw new Error(`Unknown provider: ${transcriptionProvider}`);
@@ -927,6 +930,69 @@ async function transcribeWithAssemblyAI(
   });
 
   return words;
+}
+
+/**
+ * Transcribe using Cloudflare Workers AI (no API key required — uses CF AI binding)
+ */
+async function transcribeWithCloudflare(
+  clipId: string,
+  audioBuffer: AudioBuffer,
+  inPointOffset: number
+): Promise<TranscriptWord[]> {
+  updateClipTranscript(clipId, { progress: 15, message: 'Resampling audio for Cloudflare AI...' });
+
+  const float32 = await resampleAudio(audioBuffer, 16000);
+
+  updateClipTranscript(clipId, { progress: 30, message: 'Sending to Cloudflare Workers AI...' });
+
+  const base = (import.meta.env.VITE_NEXTJS_API_URL as string | undefined) ?? '';
+  const response = await fetch(`${base}/api/ai/transcribe-audio`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: float32.buffer as ArrayBuffer,
+  });
+
+  if (!response.ok) {
+    let msg = response.statusText;
+    try {
+      const err = await response.json() as { error?: string };
+      if (err.error) msg = err.error;
+    } catch { /* ignore */ }
+    throw new Error(`Cloudflare transcription error: ${msg}`);
+  }
+
+  updateClipTranscript(clipId, { progress: 80, message: 'Processing response...' });
+
+  const result = await response.json() as {
+    text?: string;
+    words?: Array<{ word: string; start: number; end: number }>;
+  };
+
+  if (!result.words?.length && !result.text) {
+    return [];
+  }
+
+  if (result.words?.length) {
+    return result.words.map((w, i) => ({
+      id: `word-${i}`,
+      text: w.word,
+      start: w.start + inPointOffset,
+      end: w.end + inPointOffset,
+      confidence: 1,
+      speaker: 'Speaker 1',
+    }));
+  }
+
+  const durationSec = float32.length / 16000;
+  return [{
+    id: 'word-0',
+    text: result.text!,
+    start: inPointOffset,
+    end: inPointOffset + durationSec,
+    confidence: 1,
+    speaker: 'Speaker 1',
+  }];
 }
 
 /**

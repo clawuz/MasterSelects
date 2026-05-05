@@ -62,30 +62,35 @@ export const createTextClipSlice: SliceCreator<TextClipActions> = (set, get) => 
   },
 
   updateTextProperties: (clipId, props) => {
-    const { clips, invalidateCache } = get();
+    const { clips, selectedClipIds, invalidateCache } = get();
     const clip = clips.find(c => c.id === clipId);
     if (!clip?.textProperties) return;
 
-    const newProps: TextClipProperties = { ...clip.textProperties, ...props };
-
-    const canvas = clip.source?.textCanvas || textRenderer.createCanvas(1920, 1080);
-    textRenderer.render(newProps, canvas);
-
-    const texMgr = engine.getTextureManager();
-    if (texMgr) {
-      if (!texMgr.updateCanvasTexture(canvas)) {
-        log.debug('Canvas texture not cached yet, will create on render');
+    // Collect all text clips to update: primary + any other selected text clips
+    const targetIds = new Set<string>([clipId]);
+    if (selectedClipIds && selectedClipIds.size > 1 && selectedClipIds.has(clipId)) {
+      for (const id of selectedClipIds) {
+        const c = clips.find(cl => cl.id === id);
+        if (c?.textProperties) targetIds.add(id);
       }
     }
 
-    set({
-      clips: clips.map(c => c.id !== clipId ? c : {
+    const updatedClips = clips.map(c => {
+      if (!targetIds.has(c.id) || !c.textProperties) return c;
+      const newProps: TextClipProperties = { ...c.textProperties, ...props };
+      const canvas = c.source?.textCanvas || textRenderer.createCanvas(1920, 1080);
+      textRenderer.render(newProps, canvas);
+      const texMgr = engine.getTextureManager();
+      if (texMgr) texMgr.updateCanvasTexture(canvas);
+      return {
         ...c,
         textProperties: newProps,
         source: { ...c.source!, textCanvas: canvas },
         name: newProps.text.substring(0, 20) || 'Text',
-      }),
+      };
     });
+
+    set({ clips: updatedClips });
     invalidateCache();
 
     try {
@@ -97,17 +102,19 @@ export const createTextClipSlice: SliceCreator<TextClipActions> = (set, get) => 
     }
 
     if (props.fontFamily || props.fontWeight) {
-      const fontFamily = props.fontFamily || newProps.fontFamily;
-      const fontWeight = props.fontWeight || newProps.fontWeight;
+      const primaryClip = clips.find(c => c.id === clipId);
+      const fontFamily = props.fontFamily || primaryClip?.textProperties?.fontFamily || '';
+      const fontWeight = props.fontWeight || primaryClip?.textProperties?.fontWeight || 400;
       googleFontsService.loadFont(fontFamily, fontWeight).then(() => {
         const { clips: currentClips, invalidateCache: inv } = get();
-        const currentClip = currentClips.find(cl => cl.id === clipId);
-        if (!currentClip?.textProperties) return;
-
-        const currentCanvas = currentClip.source?.textCanvas;
-        if (currentCanvas) {
-          textRenderer.render(currentClip.textProperties, currentCanvas);
-          engine.getTextureManager()?.updateCanvasTexture(currentCanvas);
+        for (const id of targetIds) {
+          const currentClip = currentClips.find(cl => cl.id === id);
+          if (!currentClip?.textProperties) continue;
+          const currentCanvas = currentClip.source?.textCanvas;
+          if (currentCanvas) {
+            textRenderer.render(currentClip.textProperties, currentCanvas);
+            engine.getTextureManager()?.updateCanvasTexture(currentCanvas);
+          }
         }
         inv();
 

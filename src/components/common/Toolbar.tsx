@@ -65,7 +65,7 @@ function formatRecentProjectDate(timestamp: number): string {
   });
 }
 
-export function Toolbar({ onOpenChangelog, onOpenSplash }: ToolbarProps) {
+export function Toolbar(_props: ToolbarProps) {
   const { isEngineReady, createOutputWindow } = useEngine();
   const targets = useRenderTargetStore((s) => s.targets);
   const outputTargets = useMemo(() => {
@@ -987,37 +987,14 @@ export function Toolbar({ onOpenChangelog, onOpenSplash }: ToolbarProps) {
           </button>
           {openMenu === 'info' && (
             <div className="menu-dropdown">
-              <button className="menu-option" onClick={() => { window.dispatchEvent(new CustomEvent('open-welcome-screen')); closeMenu(); }}>
-                <span>Where are you coming from?</span>
-              </button>
-              <div className="menu-separator" />
               <button className="menu-option" onClick={() => { window.dispatchEvent(new CustomEvent('open-tutorial-campaigns')); closeMenu(); }}>
                 <span>Tutorials</span>
               </button>
-              <div className="menu-separator" />
               <button className="menu-option" onClick={() => { window.dispatchEvent(new CustomEvent('start-tutorial')); closeMenu(); }}>
                 <span>Quick Tour</span>
               </button>
               <button className="menu-option" onClick={() => { window.dispatchEvent(new CustomEvent('start-timeline-tutorial')); closeMenu(); }}>
                 <span>Timeline Tour</span>
-              </button>
-              <div className="menu-separator" />
-              <button className="menu-option" onClick={() => { onOpenChangelog?.(); closeMenu(); }}>
-                <span>Changelog</span>
-              </button>
-              <div className="menu-separator" />
-              <button className="menu-option" onClick={() => { onOpenSplash?.(); closeMenu(); }}>
-                <span>About</span>
-              </button>
-              <div className="menu-separator" />
-              <button className="menu-option" onClick={() => { setShowLegalDialog('imprint'); closeMenu(); }}>
-                <span>Imprint</span>
-              </button>
-              <button className="menu-option" onClick={() => { setShowLegalDialog('privacy'); closeMenu(); }}>
-                <span>Privacy Policy</span>
-              </button>
-              <button className="menu-option" onClick={() => { setShowLegalDialog('contact'); closeMenu(); }}>
-                <span>Contact</span>
               </button>
             </div>
           )}

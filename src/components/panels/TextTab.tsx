@@ -7,6 +7,14 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { TextClipProperties } from '../../types';
 import { useTimelineStore } from '../../stores/timeline';
 import { googleFontsService, POPULAR_FONTS } from '../../services/googleFontsService';
+import { useSettingsStore } from '../../stores/settingsStore';
+
+function getSafeAreaSubtitleY(width: number, height: number): number {
+  const aspect = width / height;
+  if (aspect < 0.8) return 0.78;   // 9:16 portrait — lower safe area
+  if (aspect > 1.4) return 0.82;   // 16:9 landscape
+  return 0.80;                      // 1:1 square
+}
 
 // Compact draggable number with icon label
 interface CompactNumberProps {
@@ -125,7 +133,18 @@ interface TextTabProps {
 }
 
 export function TextTab({ clipId, textProperties }: TextTabProps) {
-  const { updateTextProperties } = useTimelineStore();
+  const { updateTextProperties, updateClipTransform } = useTimelineStore();
+  const outputResolution = useSettingsStore(s => s.outputResolution);
+
+  const applySubtitlePreset = useCallback(() => {
+    const { width, height } = outputResolution;
+    const y = getSafeAreaSubtitleY(width, height);
+    updateClipTransform(clipId, { position: { x: 0, y, z: 0 } });
+    updateTextProperties(clipId, {
+      textAlign: 'center',
+      fontSize: Math.round(height * 0.045),
+    });
+  }, [clipId, outputResolution, updateClipTransform, updateTextProperties]);
   const [localText, setLocalText] = useState(textProperties.text);
 
   // Sync local text with props
@@ -173,6 +192,13 @@ export function TextTab({ clipId, textProperties }: TextTabProps) {
           placeholder="Enter text..."
           rows={2}
         />
+      </div>
+
+      {/* Subtitle Preset */}
+      <div className="tt-section">
+        <button className="tt-preset-btn" onClick={applySubtitlePreset} title="Position at safe-area bottom for current aspect ratio">
+          ⌨ Subtitle Position
+        </button>
       </div>
 
       {/* Font */}

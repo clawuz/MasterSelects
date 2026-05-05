@@ -45,7 +45,7 @@ function persistChangelogStateToProject(
 export type ThemeMode = 'dark' | 'light' | 'midnight' | 'system' | 'crazy' | 'custom';
 
 // Transcription provider options
-export type TranscriptionProvider = 'local' | 'openai' | 'assemblyai' | 'deepgram';
+export type TranscriptionProvider = 'local' | 'openai' | 'assemblyai' | 'deepgram' | 'cloudflare';
 
 // Preview quality options (multiplier on base resolution)
 export type PreviewQuality = 1 | 0.5 | 0.25;
@@ -59,6 +59,7 @@ interface APIKeys {
   openai: string;
   assemblyai: string;
   deepgram: string;
+  cloudflare: string;
   piapi: string;  // PiAPI key for AI video generation (Kling, Luma, etc.)
   kieai: string;  // Kie.ai key for Kling 3.0 and Nano Banana 2
   youtube: string; // YouTube Data API v3 key (optional, Invidious works without)
@@ -222,6 +223,7 @@ export const useSettingsStore = create<SettingsState>()(
         openai: '',
         assemblyai: '',
         deepgram: '',
+        cloudflare: '',
         piapi: '',
         kieai: '',
         youtube: '',

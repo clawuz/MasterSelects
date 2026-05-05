@@ -1,5 +1,21 @@
 /* WebVJ Mixer - Dark Theme Styles */
 
+@font-face {
+  font-family: 'TK Display';
+  src: url('/TKDISPLAYVF.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TK Text';
+  src: url('/TKTextVF.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   /* ═══════════════════════════════════════════
      PRIMITIVE COLORS (raw palette)
@@ -4977,6 +4993,23 @@ input, textarea {
 
 .tt-section:last-child {
   border-bottom: none;
+}
+
+.tt-preset-btn {
+  width: 100%;
+  padding: 5px 10px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-xs);
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease;
+}
+.tt-preset-btn:hover {
+  background: var(--surface-active);
+  color: var(--text-primary);
 }
 
 .tt-section-header {
