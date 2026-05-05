@@ -222,6 +222,8 @@ export interface TextClipProperties {
   // Alignment
   textAlign: 'left' | 'center' | 'right';
   verticalAlign: 'top' | 'middle' | 'bottom';
+  paddingBottom?: number;  // pixels offset from bottom edge (safe-area inset)
+  paddingX?: number;       // pixels inset from each side (safe-area horizontal, triggers word wrap)
 
   // Spacing
   lineHeight: number;           // multiplier (1.2 = 120%)

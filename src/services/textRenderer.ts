@@ -60,11 +60,42 @@ class TextRenderer {
     return canvas;
   }
 
+  private wrapTextLine(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+    if (ctx.measureText(text).width <= maxWidth) return [text];
+    const words = text.split(' ');
+    const result: string[] = [];
+    let current = words[0];
+    for (let i = 1; i < words.length; i++) {
+      const test = current + ' ' + words[i];
+      if (ctx.measureText(test).width <= maxWidth) {
+        current = test;
+      } else {
+        result.push(current);
+        current = words[i];
+      }
+    }
+    result.push(current);
+    return result;
+  }
+
   /**
-   * Render standard text (multi-line support)
+   * Render standard text (multi-line + word-wrap support)
    */
   private renderNormalText(ctx: CanvasRenderingContext2D, props: TextClipProperties): void {
-    const lines = props.text.split('\n');
+    const sideInset = props.paddingX ?? 50;
+    const availableWidth = this.width - sideInset * 2;
+
+    // Expand each \n-line with word-wrap if paddingX is set
+    const rawLines = props.text.split('\n');
+    const lines: string[] = [];
+    for (const raw of rawLines) {
+      if (props.paddingX !== undefined) {
+        lines.push(...this.wrapTextLine(ctx, raw, availableWidth));
+      } else {
+        lines.push(raw);
+      }
+    }
+
     const lineHeightPx = props.fontSize * props.lineHeight;
     const totalHeight = lines.length * lineHeightPx;
 
@@ -74,21 +105,23 @@ class TextRenderer {
       case 'top':
         startY = props.fontSize;
         break;
-      case 'bottom':
-        startY = this.height - totalHeight + props.fontSize / 2;
+      case 'bottom': {
+        const bottomPad = props.paddingBottom ?? 0;
+        startY = this.height - totalHeight - bottomPad + props.fontSize / 2;
         break;
+      }
       default: // middle
         startY = (this.height - totalHeight) / 2 + props.fontSize / 2;
     }
 
-    // Calculate X position based on horizontal alignment
+    // Calculate X position based on horizontal alignment + side inset
     let x: number;
     switch (props.textAlign) {
       case 'left':
-        x = 50; // Left margin
+        x = sideInset;
         break;
       case 'right':
-        x = this.width - 50; // Right margin
+        x = this.width - sideInset;
         break;
       default: // center
         x = this.width / 2;

@@ -2,6 +2,12 @@ import { Logger } from './logger';
 
 const log = Logger.create('NextjsApi');
 
+export interface SrtEntry {
+  start: number;
+  end: number;
+  text: string;
+}
+
 export interface ServerTranscribeSegment {
   word: string;
   startMs: number;
