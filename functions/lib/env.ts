@@ -34,7 +34,12 @@ export interface AppR2Bucket {
   put(key: string, value: unknown, options?: Record<string, unknown>): Promise<unknown>;
 }
 
+export interface CloudflareAI {
+  run(model: string, input: Record<string, unknown>): Promise<unknown>;
+}
+
 export interface Env {
+  AI?: CloudflareAI;
   ANTHROPIC_API_KEY?: string;
   AUTH_EMAIL_FROM?: string;
   DB: AppD1Database;

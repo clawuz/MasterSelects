@@ -45,7 +45,7 @@ function persistChangelogStateToProject(
 export type ThemeMode = 'dark' | 'light' | 'midnight' | 'system' | 'crazy' | 'custom';
 
 // Transcription provider options
-export type TranscriptionProvider = 'local' | 'openai' | 'assemblyai' | 'deepgram' | 'cloudflare';
+export type TranscriptionProvider = 'local' | 'server' | 'openai' | 'assemblyai' | 'deepgram';
 
 // Preview quality options (multiplier on base resolution)
 export type PreviewQuality = 1 | 0.5 | 0.25;
@@ -59,7 +59,6 @@ interface APIKeys {
   openai: string;
   assemblyai: string;
   deepgram: string;
-  cloudflare: string;
   piapi: string;  // PiAPI key for AI video generation (Kling, Luma, etc.)
   kieai: string;  // Kie.ai key for Kling 3.0 and Nano Banana 2
   youtube: string; // YouTube Data API v3 key (optional, Invidious works without)
@@ -223,14 +222,13 @@ export const useSettingsStore = create<SettingsState>()(
         openai: '',
         assemblyai: '',
         deepgram: '',
-        cloudflare: '',
         piapi: '',
         kieai: '',
         youtube: '',
         klingAccessKey: '',
         klingSecretKey: '',
       },
-      transcriptionProvider: 'local',
+      transcriptionProvider: 'server',
       previewQuality: 1, // Full quality by default
       showTransparencyGrid: false, // Don't show checkerboard by default
       saveMode: 'continuous' as SaveMode, // Continuous save by default — every change saved automatically
@@ -485,7 +483,7 @@ export const useSettingsStore = create<SettingsState>()(
       // Helpers
       getActiveApiKey: () => {
         const { transcriptionProvider, apiKeys } = get();
-        if (transcriptionProvider === 'local') return null;
+        if (transcriptionProvider === 'local' || transcriptionProvider === 'server') return null;
         return apiKeys[transcriptionProvider] || null;
       },
 
@@ -520,6 +518,14 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'masterselects-settings',
+      version: 2,
+      migrate: (persisted: unknown, version: number) => {
+        const state = (persisted ?? {}) as Record<string, unknown>;
+        if (version < 2 && (state['transcriptionProvider'] === 'local' || state['transcriptionProvider'] === 'cloudflare')) {
+          state['transcriptionProvider'] = 'server';
+        }
+        return state;
+      },
       // Don't persist API keys in localStorage - they go to encrypted IndexedDB
       // Don't persist transient UI state like isSettingsOpen
       partialize: (state) => ({

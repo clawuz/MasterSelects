@@ -8,6 +8,7 @@ import type { MediaFile } from '../stores/mediaStore/types';
 import { useSettingsStore } from '../stores/settingsStore';
 import type { TranscriptWord, TranscriptStatus } from '../types';
 import { projectFileService } from './project/ProjectFileService';
+import { transcribeAudio } from './nextjsApi';
 
 const log = Logger.create('ClipTranscriber');
 
@@ -152,10 +153,10 @@ export async function transcribeClip(clipId: string, language: string = 'auto', 
 
   // Get transcription provider settings
   const { transcriptionProvider, apiKeys } = useSettingsStore.getState();
-  const apiKey = transcriptionProvider !== 'local' ? apiKeys[transcriptionProvider] : null;
+  const apiKey = transcriptionProvider !== 'local' && transcriptionProvider !== 'server' ? apiKeys[transcriptionProvider] : null;
 
-  // Validate API key if using cloud provider (cloudflare uses built-in AI binding, no key needed)
-  if (transcriptionProvider !== 'local' && transcriptionProvider !== 'cloudflare' && !apiKey) {
+  // Validate API key if using cloud provider (server uses built-in CF AI binding, no key needed)
+  if (transcriptionProvider !== 'local' && transcriptionProvider !== 'server' && !apiKey) {
     log.error(`No API key configured for ${transcriptionProvider}`);
     updateClipTranscript(clipId, {
       status: 'error',
@@ -232,6 +233,44 @@ export async function transcribeClip(clipId: string, language: string = 'auto', 
           message: ranges.length > 1 ? `Transcribing range ${ri + 1}/${ranges.length}...` : 'Starting local transcription...',
         });
         words = await runWorkerTranscription(clipId, audioData, language, audioDuration, rangeStart);
+      } else if (transcriptionProvider === 'server') {
+        const CHUNK_SEC = 10;
+        const pcm16k = await resampleAudio(audioBuffer, 16000);
+        const chunkSize = CHUNK_SEC * 16000;
+        const totalChunks = Math.ceil(pcm16k.length / chunkSize);
+        words = [];
+        for (let ci = 0; ci < totalChunks; ci++) {
+          const chunkProgress = progressBase + Math.round(((ci / totalChunks) * 85 + 10) * progressScale);
+          updateClipTranscript(clipId, {
+            progress: chunkProgress,
+            message: totalChunks > 1
+              ? `Whisper: chunk ${ci + 1}/${totalChunks}...`
+              : 'Sending to whisper server...',
+          });
+          const chunkPcm = pcm16k.slice(ci * chunkSize, (ci + 1) * chunkSize);
+          const chunkOffsetSec = rangeStart + ci * CHUNK_SEC;
+          const audioBlob = float32ToWavBlob(chunkPcm, 16000);
+          const result = await transcribeAudio(audioBlob, language);
+          let chunkWords: TranscriptWord[] = result.segments.map((s, i) => ({
+            id: `${clipId}-c${ci}-s${i}`,
+            text: s.word,
+            start: chunkOffsetSec + s.startMs / 1000,
+            end: chunkOffsetSec + s.endMs / 1000,
+            confidence: 1,
+            speaker: 'Speaker 1',
+          }));
+          if (chunkWords.length === 0 && result.subtitles.length > 0) {
+            chunkWords = result.subtitles.map((s, i) => ({
+              id: `${clipId}-c${ci}-sub${i}`,
+              text: s.text,
+              start: chunkOffsetSec + s.startMs / 1000,
+              end: chunkOffsetSec + s.endMs / 1000,
+              confidence: 1,
+              speaker: 'Speaker 1',
+            }));
+          }
+          words.push(...chunkWords);
+        }
       } else {
         updateClipTranscript(clipId, {
           progress: progressBase + Math.round(10 * progressScale),
@@ -249,9 +288,6 @@ export async function transcribeClip(clipId: string, language: string = 'auto', 
             break;
           case 'deepgram':
             words = await transcribeWithDeepgram(clipId, audioBlob, language, apiKey!, rangeStart);
-            break;
-          case 'cloudflare':
-            words = await transcribeWithCloudflare(clipId, audioBuffer, rangeStart);
             break;
           default:
             throw new Error(`Unknown provider: ${transcriptionProvider}`);
@@ -597,6 +633,28 @@ export function cancelTranscription(): void {
 // Cloud API Transcription Functions
 // ============================================================================
 
+function float32ToWavBlob(samples: Float32Array, sampleRate: number): Blob {
+  const numChannels = 1;
+  const bitDepth = 16;
+  const int16 = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  const dataSize = int16.length * 2;
+  const buf = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buf);
+  const str = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); str(8, 'WAVE');
+  str(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true); view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * (bitDepth / 8), true);
+  view.setUint16(32, numChannels * (bitDepth / 8), true); view.setUint16(34, bitDepth, true);
+  str(36, 'data'); view.setUint32(40, dataSize, true);
+  new Int16Array(buf, 44).set(int16);
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
 /**
  * Convert AudioBuffer to WAV Blob for API upload
  */
@@ -930,69 +988,6 @@ async function transcribeWithAssemblyAI(
   });
 
   return words;
-}
-
-/**
- * Transcribe using Cloudflare Workers AI (no API key required — uses CF AI binding)
- */
-async function transcribeWithCloudflare(
-  clipId: string,
-  audioBuffer: AudioBuffer,
-  inPointOffset: number
-): Promise<TranscriptWord[]> {
-  updateClipTranscript(clipId, { progress: 15, message: 'Resampling audio for Cloudflare AI...' });
-
-  const float32 = await resampleAudio(audioBuffer, 16000);
-
-  updateClipTranscript(clipId, { progress: 30, message: 'Sending to Cloudflare Workers AI...' });
-
-  const base = (import.meta.env.VITE_NEXTJS_API_URL as string | undefined) ?? '';
-  const response = await fetch(`${base}/api/ai/transcribe-audio`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream' },
-    body: float32.buffer as ArrayBuffer,
-  });
-
-  if (!response.ok) {
-    let msg = response.statusText;
-    try {
-      const err = await response.json() as { error?: string };
-      if (err.error) msg = err.error;
-    } catch { /* ignore */ }
-    throw new Error(`Cloudflare transcription error: ${msg}`);
-  }
-
-  updateClipTranscript(clipId, { progress: 80, message: 'Processing response...' });
-
-  const result = await response.json() as {
-    text?: string;
-    words?: Array<{ word: string; start: number; end: number }>;
-  };
-
-  if (!result.words?.length && !result.text) {
-    return [];
-  }
-
-  if (result.words?.length) {
-    return result.words.map((w, i) => ({
-      id: `word-${i}`,
-      text: w.word,
-      start: w.start + inPointOffset,
-      end: w.end + inPointOffset,
-      confidence: 1,
-      speaker: 'Speaker 1',
-    }));
-  }
-
-  const durationSec = float32.length / 16000;
-  return [{
-    id: 'word-0',
-    text: result.text!,
-    start: inPointOffset,
-    end: inPointOffset + durationSec,
-    confidence: 1,
-    speaker: 'Speaker 1',
-  }];
 }
 
 /**
