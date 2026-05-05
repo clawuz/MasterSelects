@@ -5,12 +5,12 @@ pages_build_output_dir = "dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "masterselects"
-database_id = "a2f0a1aa-6bd9-4c75-9406-d09b93635eac"
+database_id = "f9f464d1-b3b3-461f-bc78-b5ffb583361e"
 migrations_dir = "migrations"
 
 [[kv_namespaces]]
 binding = "KV"
-id = "daadda485425465791a1c83afc48be67"
+id = "2e38018dc76f4fa9b3fe007c805517c7"
 
 [vars]
 ENVIRONMENT = "development"
@@ -20,12 +20,12 @@ ENVIRONMENT = "development"
 [[env.preview.d1_databases]]
 binding = "DB"
 database_name = "masterselects"
-database_id = "a2f0a1aa-6bd9-4c75-9406-d09b93635eac"
+database_id = "f9f464d1-b3b3-461f-bc78-b5ffb583361e"
 migrations_dir = "migrations"
 
 [[env.preview.kv_namespaces]]
 binding = "KV"
-id = "daadda485425465791a1c83afc48be67"
+id = "2e38018dc76f4fa9b3fe007c805517c7"
 
 [env.preview.vars]
 ENVIRONMENT = "development"
@@ -35,12 +35,12 @@ ENVIRONMENT = "development"
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "masterselects"
-database_id = "a2f0a1aa-6bd9-4c75-9406-d09b93635eac"
+database_id = "f9f464d1-b3b3-461f-bc78-b5ffb583361e"
 migrations_dir = "migrations"
 
 [[env.production.kv_namespaces]]
 binding = "KV"
-id = "daadda485425465791a1c83afc48be67"
+id = "2e38018dc76f4fa9b3fe007c805517c7"
 
 [env.production.vars]
 ENVIRONMENT = "production"
