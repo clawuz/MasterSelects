@@ -985,25 +985,22 @@ export async function handleAddTextClip(
   const fontSize = (args.fontSize as number | undefined) ?? 72;
   const backgroundColor = args.backgroundColor as string | undefined;
 
-  // Find or use specified video track
+  // Find or use specified video track; auto-create if none exists
   let trackId = args.trackId as string | undefined;
   if (!trackId) {
     const videoTrack = store.tracks.find(t => t.type === 'video');
-    if (!videoTrack) {
-      return { success: false, error: 'No video track found. Create a video track first.' };
-    }
-    trackId = videoTrack.id;
+    trackId = videoTrack ? videoTrack.id : useTimelineStore.getState().addTrack('video');
   }
 
-  const clipId = await store.addTextClip(trackId, startTime, duration);
+  const clipId = await useTimelineStore.getState().addTextClip(trackId, startTime, duration);
   if (!clipId) {
     return { success: false, error: 'Failed to create text clip' };
   }
 
-  // Apply text properties
+  // Apply text properties (re-fetch store to avoid stale closure after async addTextClip)
   const textProps: Record<string, unknown> = { text, color, fontSize };
   if (backgroundColor !== undefined) textProps.backgroundColor = backgroundColor;
-  store.updateTextProperties(clipId, textProps as Parameters<typeof store.updateTextProperties>[1]);
+  useTimelineStore.getState().updateTextProperties(clipId, textProps as Parameters<typeof store.updateTextProperties>[1]);
 
   return {
     success: true,
@@ -1022,13 +1019,10 @@ export async function handleAddSolidClip(
   let trackId = args.trackId as string | undefined;
   if (!trackId) {
     const videoTrack = store.tracks.find(t => t.type === 'video');
-    if (!videoTrack) {
-      return { success: false, error: 'No video track found. Create a video track first.' };
-    }
-    trackId = videoTrack.id;
+    trackId = videoTrack ? videoTrack.id : useTimelineStore.getState().addTrack('video');
   }
 
-  const clipId = store.addSolidClip(trackId, startTime, color, duration);
+  const clipId = useTimelineStore.getState().addSolidClip(trackId, startTime, color, duration);
   if (!clipId) {
     return { success: false, error: 'Failed to create solid clip' };
   }

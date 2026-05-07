@@ -21,7 +21,7 @@ export const effectToolDefinitions: ToolDefinition[] = [
       parameters: {
         type: 'object',
         properties: {
-          clipId: { type: 'string', description: 'The clip ID' },
+          clipId: { type: 'string', description: 'The clip ID — MUST come from getTimelineState or a previous tool result. Never guess or use placeholder IDs like "video-1".' },
           effectType: { type: 'string', description: 'Effect type ID (e.g. "brightnessContrast", "gaussianBlur", "chromaKey")' },
           params: { type: 'object', description: 'Optional initial parameter values. If not provided, defaults are used.' },
         },

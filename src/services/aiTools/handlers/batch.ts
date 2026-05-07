@@ -120,12 +120,16 @@ export async function handleExecuteBatch(
     }
   }
 
+  const failedResults = results.filter(r => !r.success);
   return {
     success: allSucceeded,
+    error: failedResults.length > 0
+      ? failedResults.map(r => `${r.tool}: ${r.error ?? 'failed'}`).join('; ')
+      : undefined,
     data: {
       totalActions: actions.length,
       succeeded: results.filter(r => r.success).length,
-      failed: results.filter(r => !r.success).length,
+      failed: failedResults.length,
       results,
     },
   };

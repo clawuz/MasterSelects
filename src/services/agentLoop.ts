@@ -11,7 +11,15 @@ const log = Logger.create('AgentLoop');
 const MAX_STEPS = 20;
 
 const SYSTEM_PROMPT = `You are a video editing AI. Use tools to edit the timeline. State: {{CONTEXT}}
-Rules: Use executeBatch for multiple edits. Time in seconds. Reply briefly in the user's language.`;
+
+Rules:
+- Use executeBatch for multiple edits in one go.
+- Time values are in seconds.
+- NEVER guess or invent clip/track IDs. All IDs come from State or from tool results.
+- To add text on a background: use addSolidClip (background color) + addTextClip (text content, color, fontSize).
+- To add text/solid clips, no mediaFileId needed — just trackId (optional), startTime, duration.
+- If State.timeline.tracks is empty, create a track first with createTrack before adding clips.
+- Reply briefly in the user's language.`;
 
 export interface AgentResult {
   text: string;
