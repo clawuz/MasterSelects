@@ -193,6 +193,17 @@ export async function runAgentLoop(
   }
 }
 
+function compactParams(params: Record<string, unknown>): Record<string, unknown> {
+  const props = params.properties as Record<string, Record<string, unknown>> | undefined;
+  if (!props) return params;
+  const stripped: Record<string, Record<string, unknown>> = {};
+  for (const [k, v] of Object.entries(props)) {
+    const { description: _desc, ...rest } = v;
+    stripped[k] = rest;
+  }
+  return { ...params, properties: stripped };
+}
+
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = 'llama-3.1-8b-instant';
 
@@ -226,8 +237,8 @@ export async function runGroqAgentLoop(
     type: 'function' as const,
     function: {
       name: t.function.name,
-      description: t.function.description,
-      parameters: t.function.parameters,
+      description: t.function.description.slice(0, 60),
+      parameters: compactParams(t.function.parameters),
     },
   }));
 
