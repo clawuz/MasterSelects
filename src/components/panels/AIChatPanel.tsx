@@ -1,8 +1,9 @@
-// AI Chat Panel — Gemini-powered agentic video editor
+// AI Chat Panel — Lemonade (local) or Gemini agent chat
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { apiKeyManager } from '../../services/apiKeyManager';
-import { runAgentLoop } from '../../services/agentLoop';
+import { runAgentLoop, runLemonadeAgentLoop } from '../../services/agentLoop';
+import { checkLemonadeHealth, DEFAULT_LEMONADE_ENDPOINT, DEFAULT_LEMONADE_MODEL } from '../../services/lemonadeProvider';
 import './AIChatPanel.css';
 
 interface Message {
@@ -12,6 +13,8 @@ interface Message {
   timestamp: Date;
 }
 
+type Provider = 'lemonade' | 'gemini';
+
 function generateId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -20,25 +23,28 @@ export function AIChatPanel() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
-  const [apiKey, setApiKey] = useState('');
-  const [apiKeyLoaded, setApiKeyLoaded] = useState(false);
+  const [geminiKey, setGeminiKey] = useState('');
+  const [provider, setProvider] = useState<Provider>('lemonade');
+  const [lemonadeOk, setLemonadeOk] = useState<boolean | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const progressIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    apiKeyManager.getKeyByType('gemini').then((key) => {
-      if (key) setApiKey(key);
-      setApiKeyLoaded(true);
+    Promise.all([
+      apiKeyManager.getKeyByType('gemini'),
+      checkLemonadeHealth(DEFAULT_LEMONADE_ENDPOINT),
+    ]).then(([key, health]) => {
+      if (key) setGeminiKey(key);
+      setLemonadeOk(health.available);
+      setProvider(health.available ? 'lemonade' : 'gemini');
+      setLoaded(true);
     });
   }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  const handleSaveApiKey = useCallback(async (key: string) => {
-    await apiKeyManager.storeKeyByType('gemini', key);
-  }, []);
 
   const appendMessage = useCallback((msg: Omit<Message, 'id' | 'timestamp'>) => {
     const full: Message = { ...msg, id: generateId(), timestamp: new Date() };
@@ -55,8 +61,13 @@ export function AIChatPanel() {
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isRunning) return;
-    if (!apiKey) {
-      appendMessage({ role: 'error', content: 'Gemini API anahtarı giriniz.' });
+
+    if (provider === 'gemini' && !geminiKey) {
+      appendMessage({ role: 'error', content: 'Gemini API anahtarı giriniz (Settings → API Keys).' });
+      return;
+    }
+    if (provider === 'lemonade' && !lemonadeOk) {
+      appendMessage({ role: 'error', content: 'Lemonade çalışmıyor. Lütfen başlatın veya Gemini seçin.' });
       return;
     }
 
@@ -71,13 +82,14 @@ export function AIChatPanel() {
       { id: progressId, role: 'progress', content: '⏳ Çalışıyor...', timestamp: new Date() },
     ]);
 
-    const result = await runAgentLoop(text, apiKey, (progressMsg) => {
-      if (progressIdRef.current) {
-        updateMessage(progressIdRef.current, progressMsg);
-      }
-    });
+    const onProgress = (msg: string) => {
+      if (progressIdRef.current) updateMessage(progressIdRef.current, msg);
+    };
 
-    // Remove progress message
+    const result = provider === 'gemini'
+      ? await runAgentLoop(text, geminiKey, onProgress)
+      : await runLemonadeAgentLoop(text, onProgress, DEFAULT_LEMONADE_ENDPOINT, DEFAULT_LEMONADE_MODEL);
+
     setMessages((prev) => prev.filter((m) => m.id !== progressIdRef.current));
     progressIdRef.current = null;
     setIsRunning(false);
@@ -90,7 +102,7 @@ export function AIChatPanel() {
         content: result.text || `✅ Tamamlandı — ${result.stepsUsed} adım uygulandı.`,
       });
     }
-  }, [input, isRunning, apiKey, appendMessage, updateMessage]);
+  }, [input, isRunning, provider, geminiKey, lemonadeOk, appendMessage, updateMessage]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -102,21 +114,37 @@ export function AIChatPanel() {
     [handleSend]
   );
 
-  if (!apiKeyLoaded) return null;
+  if (!loaded) return null;
 
   return (
     <div className="ai-chat-panel">
       <div className="ai-chat-api-key-row">
-        <input
-          type="password"
-          className="ai-chat-api-key-input"
-          placeholder="Gemini API anahtarı (Google AI Studio)"
-          value={apiKey}
-          onChange={(e) => {
-            setApiKey(e.target.value);
-            handleSaveApiKey(e.target.value);
-          }}
-        />
+        <button
+          className={`ai-chat-provider-btn${provider === 'lemonade' ? ' ai-chat-provider-btn--active' : ''}`}
+          onClick={() => setProvider('lemonade')}
+          title="Lemonade (yerel, ücretsiz)"
+        >
+          🍋 Lemonade {lemonadeOk === false ? '(kapalı)' : lemonadeOk ? '(hazır)' : ''}
+        </button>
+        <button
+          className={`ai-chat-provider-btn${provider === 'gemini' ? ' ai-chat-provider-btn--active' : ''}`}
+          onClick={() => setProvider('gemini')}
+          title="Gemini API"
+        >
+          ✨ Gemini {geminiKey ? '' : '(key yok)'}
+        </button>
+        {provider === 'gemini' && (
+          <input
+            type="password"
+            className="ai-chat-api-key-input"
+            placeholder="Gemini API anahtarı..."
+            value={geminiKey}
+            onChange={(e) => {
+              setGeminiKey(e.target.value);
+              apiKeyManager.storeKeyByType('gemini', e.target.value);
+            }}
+          />
+        )}
       </div>
 
       <div className="ai-chat-messages">

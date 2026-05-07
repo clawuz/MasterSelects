@@ -1124,6 +1124,26 @@
 .ai-chat-api-key-row {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-color, #333);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.ai-chat-provider-btn {
+  background: var(--input-bg, #1a1a1a);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+  color: var(--text-secondary, #888);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ai-chat-provider-btn--active {
+  border-color: var(--accent, #4a9eff);
+  color: var(--text-primary, #fff);
 }
 
 .ai-chat-api-key-input {

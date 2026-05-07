@@ -3,7 +3,9 @@ import { captureSnapshot, undo } from '../stores/historyStore';
 import { buildContext } from './contextBuilder';
 import { sendGeminiMessage, buildFunctionResponsePart } from './geminiService';
 import { executeAITool, AI_TOOLS } from './aiTools';
+import { createLemonadeChatCompletionStream, DEFAULT_LEMONADE_ENDPOINT, DEFAULT_LEMONADE_MODEL } from './lemonadeProvider';
 import type { GeminiMessage, GeminiContentPart } from './geminiService';
+import type { LemonadeMessage } from './lemonadeProvider';
 
 const log = Logger.create('AgentLoop');
 const MAX_STEPS = 20;
@@ -25,6 +27,104 @@ export interface AgentResult {
   text: string;
   stepsUsed: number;
   error?: string;
+}
+
+export async function runLemonadeAgentLoop(
+  userMessage: string,
+  onProgress: (message: string) => void,
+  endpoint: string = DEFAULT_LEMONADE_ENDPOINT,
+  model: string = DEFAULT_LEMONADE_MODEL,
+): Promise<AgentResult> {
+  captureSnapshot('AI agent run');
+
+  const context = buildContext();
+  const systemPrompt = SYSTEM_PROMPT.replace('{{CONTEXT}}', context);
+
+  const messages: LemonadeMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userMessage },
+  ];
+
+  let step = 0;
+  let finalText = '';
+
+  try {
+    while (step < MAX_STEPS) {
+      const response = await createLemonadeChatCompletionStream({
+        endpoint,
+        model,
+        messages,
+        tools: AI_TOOLS,
+      });
+      step++;
+
+      if (response.content) {
+        finalText = response.content;
+      }
+
+      if (response.toolCalls.length === 0) {
+        log.info(`Lemonade agent finished in ${step} step(s)`);
+        return { text: finalText, stepsUsed: step };
+      }
+
+      // Append assistant message with tool calls
+      messages.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: response.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: { name: tc.name, arguments: tc.arguments },
+        })),
+      });
+
+      // Execute each tool call
+      for (const toolCall of response.toolCalls) {
+        onProgress(`🔧 ${toolCall.name} çalışıyor... (${step}/${MAX_STEPS})`);
+        log.debug(`Executing tool: ${toolCall.name}`);
+
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(toolCall.arguments) as Record<string, unknown>;
+        } catch {
+          // ignore parse errors, pass empty args
+        }
+
+        const result = await executeAITool(toolCall.name, args, 'chat');
+
+        if (!result.success) {
+          log.warn(`Tool ${toolCall.name} failed: ${result.error}`);
+          undo();
+          return {
+            text: '',
+            stepsUsed: step,
+            error: `${toolCall.name} aracı başarısız oldu: ${result.error}. Değişiklikler geri alındı.`,
+          };
+        }
+
+        messages.push({
+          role: 'tool',
+          content: JSON.stringify(result),
+          tool_call_id: toolCall.id,
+        });
+      }
+    }
+
+    undo();
+    return {
+      text: '',
+      stepsUsed: step,
+      error: `Agent maksimum ${MAX_STEPS} adıma ulaştı. Değişiklikler geri alındı.`,
+    };
+  } catch (error) {
+    log.error('Lemonade agent loop error', error);
+    undo();
+    return {
+      text: '',
+      stepsUsed: step,
+      error: `Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}. Değişiklikler geri alındı.`,
+    };
+  }
 }
 
 export async function runAgentLoop(
