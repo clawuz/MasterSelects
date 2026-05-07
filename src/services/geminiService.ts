@@ -50,14 +50,17 @@ export function parseGeminiResponse(response: unknown): GeminiParsedResponse {
     candidates?: Array<{ content?: { parts?: GeminiContentPart[] } }>;
   };
   const parts = resp?.candidates?.[0]?.content?.parts ?? [];
-  const textParts = parts.filter((p) => p.text !== undefined);
-  const toolCallParts = parts.filter((p) => p.functionCall !== undefined);
+  const textParts = parts.filter((p): p is GeminiContentPart & { text: string } => p.text !== undefined);
+  const toolCallParts = parts.filter(
+    (p): p is GeminiContentPart & { functionCall: { name: string; args: Record<string, unknown> } } =>
+      p.functionCall !== undefined
+  );
 
   return {
-    text: textParts.map((p) => p.text ?? '').join(''),
+    text: textParts.map((p) => p.text).join(''),
     toolCalls: toolCallParts.map((p) => ({
-      name: p.functionCall!.name,
-      args: p.functionCall!.args,
+      name: p.functionCall.name,
+      args: p.functionCall.args,
     })),
     rawContent: parts,
   };
@@ -98,7 +101,14 @@ export async function sendGeminiMessage(
     throw new Error(`Gemini API error ${response.status}: ${errorText}`);
   }
 
-  const data = await response.json();
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch (error) {
+    log.error('Failed to parse Gemini JSON response', error);
+    throw new Error(`Gemini API returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   log.debug('Gemini response received', { data });
   return parseGeminiResponse(data);
 }

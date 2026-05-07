@@ -66,4 +66,14 @@ describe('parseGeminiResponse', () => {
     expect(parsed.toolCalls[0].name).toBe('deleteClip');
     expect(parsed.toolCalls[0].args).toEqual({ clipId: 'clip_1' });
   });
+
+  it('handles empty or missing candidates gracefully', () => {
+    const emptyResult = parseGeminiResponse({});
+    expect(emptyResult.text).toBe('');
+    expect(emptyResult.toolCalls).toHaveLength(0);
+
+    const noCandidates = parseGeminiResponse({ candidates: [] });
+    expect(noCandidates.text).toBe('');
+    expect(noCandidates.toolCalls).toHaveLength(0);
+  });
 });
