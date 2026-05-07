@@ -66,6 +66,7 @@ interface APIKeys {
   klingAccessKey: string;
   klingSecretKey: string;
   gemini: string; // Google Gemini API key
+  groq: string;   // Groq API key
 }
 
 // Autosave interval options (in minutes)
@@ -229,6 +230,7 @@ export const useSettingsStore = create<SettingsState>()(
         klingAccessKey: '',
         klingSecretKey: '',
         gemini: '',
+        groq: '',
       },
       transcriptionProvider: 'server',
       previewQuality: 1, // Full quality by default

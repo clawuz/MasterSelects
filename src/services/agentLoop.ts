@@ -202,3 +202,141 @@ export async function runAgentLoop(
     };
   }
 }
+
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
+
+interface GroqMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string | null;
+  tool_call_id?: string;
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
+}
+
+export async function runGroqAgentLoop(
+  userMessage: string,
+  apiKey: string,
+  onProgress: (message: string) => void,
+): Promise<AgentResult> {
+  captureSnapshot('AI agent run');
+
+  const context = buildContext();
+  const systemPrompt = SYSTEM_PROMPT.replace('{{CONTEXT}}', context);
+
+  const messages: GroqMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userMessage },
+  ];
+
+  const tools = AI_TOOLS.map((t) => ({
+    type: 'function' as const,
+    function: {
+      name: t.function.name,
+      description: t.function.description,
+      parameters: t.function.parameters,
+    },
+  }));
+
+  let step = 0;
+  let finalText = '';
+
+  try {
+    while (step < MAX_STEPS) {
+      const response = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ model: GROQ_MODEL, messages, tools, temperature: 0.2 }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Groq API error ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json() as {
+        choices: Array<{
+          message: {
+            content: string | null;
+            tool_calls?: Array<{
+              id: string;
+              function: { name: string; arguments: string };
+            }>;
+          };
+        }>;
+      };
+
+      step++;
+      const msg = data.choices[0]?.message;
+      if (!msg) break;
+
+      if (msg.content) finalText = msg.content;
+
+      const toolCalls = msg.tool_calls ?? [];
+
+      if (toolCalls.length === 0) {
+        log.info(`Groq agent finished in ${step} step(s)`);
+        return { text: finalText, stepsUsed: step };
+      }
+
+      messages.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: toolCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: { name: tc.function.name, arguments: tc.function.arguments },
+        })),
+      });
+
+      for (const toolCall of toolCalls) {
+        onProgress(`🔧 ${toolCall.function.name} çalışıyor... (${step}/${MAX_STEPS})`);
+        log.debug(`Executing tool: ${toolCall.function.name}`);
+
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+        } catch { /* ignore */ }
+
+        const result = await executeAITool(toolCall.function.name, args, 'chat');
+
+        if (!result.success) {
+          log.warn(`Tool ${toolCall.function.name} failed: ${result.error}`);
+          undo();
+          return {
+            text: '',
+            stepsUsed: step,
+            error: `${toolCall.function.name} aracı başarısız oldu: ${result.error}. Değişiklikler geri alındı.`,
+          };
+        }
+
+        messages.push({
+          role: 'tool',
+          content: JSON.stringify(result),
+          tool_call_id: toolCall.id,
+        });
+      }
+    }
+
+    undo();
+    return {
+      text: '',
+      stepsUsed: step,
+      error: `Agent maksimum ${MAX_STEPS} adıma ulaştı. Değişiklikler geri alındı.`,
+    };
+  } catch (error) {
+    log.error('Groq agent loop error', error);
+    undo();
+    return {
+      text: '',
+      stepsUsed: step,
+      error: `Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}. Değişiklikler geri alındı.`,
+    };
+  }
+}

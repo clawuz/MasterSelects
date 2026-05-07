@@ -50,6 +50,7 @@ export function ApiKeysSettings({ localKeys, onKeyChange }: ApiKeysSettingsProps
     kieai: false,
     youtube: false,
     gemini: false,
+    groq: false,
   });
 
   const toggleShowKey = (provider: keyof typeof showKeys) => {
@@ -68,6 +69,18 @@ export function ApiKeysSettings({ localKeys, onKeyChange }: ApiKeysSettingsProps
 
       <div className="settings-group">
         <div className="settings-group-title">AI Chat</div>
+
+        <ApiKeyRow
+          label="Groq API Key"
+          provider="groq"
+          value={getKey('groq')}
+          placeholder="gsk_..."
+          linkUrl="https://console.groq.com/keys"
+          linkText="Get API Key"
+          show={showKeys.groq}
+          onToggle={() => toggleShowKey('groq')}
+          onChange={(v) => onKeyChange('groq', v)}
+        />
 
         <ApiKeyRow
           label="Gemini API Key"

@@ -1,8 +1,8 @@
-// AI Chat Panel — Lemonade (local) or Gemini agent chat
+// AI Chat Panel — Groq / Gemini / Lemonade agent chat
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { apiKeyManager } from '../../services/apiKeyManager';
-import { runAgentLoop, runLemonadeAgentLoop } from '../../services/agentLoop';
+import { runAgentLoop, runGroqAgentLoop, runLemonadeAgentLoop } from '../../services/agentLoop';
 import { checkLemonadeHealth, DEFAULT_LEMONADE_ENDPOINT, DEFAULT_LEMONADE_MODEL } from '../../services/lemonadeProvider';
 import './AIChatPanel.css';
 
@@ -13,7 +13,7 @@ interface Message {
   timestamp: Date;
 }
 
-type Provider = 'lemonade' | 'gemini';
+type Provider = 'groq' | 'gemini' | 'lemonade';
 
 function generateId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -24,8 +24,9 @@ export function AIChatPanel() {
   const [input, setInput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [geminiKey, setGeminiKey] = useState('');
-  const [provider, setProvider] = useState<Provider>('lemonade');
-  const [lemonadeOk, setLemonadeOk] = useState<boolean | null>(null);
+  const [groqKey, setGroqKey] = useState('');
+  const [provider, setProvider] = useState<Provider>('groq');
+  const [lemonadeOk, setLemonadeOk] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const progressIdRef = useRef<string | null>(null);
@@ -33,11 +34,16 @@ export function AIChatPanel() {
   useEffect(() => {
     Promise.all([
       apiKeyManager.getKeyByType('gemini'),
+      apiKeyManager.getKeyByType('groq'),
       checkLemonadeHealth(DEFAULT_LEMONADE_ENDPOINT),
-    ]).then(([key, health]) => {
-      if (key) setGeminiKey(key);
+    ]).then(([gKey, grKey, health]) => {
+      if (gKey) setGeminiKey(gKey);
+      if (grKey) setGroqKey(grKey);
       setLemonadeOk(health.available);
-      setProvider(health.available ? 'lemonade' : 'gemini');
+      // Default: groq if key exists, else lemonade if available, else gemini
+      if (grKey) setProvider('groq');
+      else if (health.available) setProvider('lemonade');
+      else setProvider('gemini');
       setLoaded(true);
     });
   }, []);
@@ -62,12 +68,16 @@ export function AIChatPanel() {
     const text = input.trim();
     if (!text || isRunning) return;
 
+    if (provider === 'groq' && !groqKey) {
+      appendMessage({ role: 'error', content: 'Groq API anahtarı giriniz (Settings → API Keys).' });
+      return;
+    }
     if (provider === 'gemini' && !geminiKey) {
       appendMessage({ role: 'error', content: 'Gemini API anahtarı giriniz (Settings → API Keys).' });
       return;
     }
     if (provider === 'lemonade' && !lemonadeOk) {
-      appendMessage({ role: 'error', content: 'Lemonade çalışmıyor. Lütfen başlatın veya Gemini seçin.' });
+      appendMessage({ role: 'error', content: 'Lemonade çalışmıyor. Lütfen başlatın veya başka provider seçin.' });
       return;
     }
 
@@ -86,9 +96,14 @@ export function AIChatPanel() {
       if (progressIdRef.current) updateMessage(progressIdRef.current, msg);
     };
 
-    const result = provider === 'gemini'
-      ? await runAgentLoop(text, geminiKey, onProgress)
-      : await runLemonadeAgentLoop(text, onProgress, DEFAULT_LEMONADE_ENDPOINT, DEFAULT_LEMONADE_MODEL);
+    let result;
+    if (provider === 'groq') {
+      result = await runGroqAgentLoop(text, groqKey, onProgress);
+    } else if (provider === 'gemini') {
+      result = await runAgentLoop(text, geminiKey, onProgress);
+    } else {
+      result = await runLemonadeAgentLoop(text, onProgress, DEFAULT_LEMONADE_ENDPOINT, DEFAULT_LEMONADE_MODEL);
+    }
 
     setMessages((prev) => prev.filter((m) => m.id !== progressIdRef.current));
     progressIdRef.current = null;
@@ -102,7 +117,7 @@ export function AIChatPanel() {
         content: result.text || `✅ Tamamlandı — ${result.stepsUsed} adım uygulandı.`,
       });
     }
-  }, [input, isRunning, provider, geminiKey, lemonadeOk, appendMessage, updateMessage]);
+  }, [input, isRunning, provider, groqKey, geminiKey, lemonadeOk, appendMessage, updateMessage]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -116,35 +131,49 @@ export function AIChatPanel() {
 
   if (!loaded) return null;
 
+  const activeKey = provider === 'groq' ? groqKey : provider === 'gemini' ? geminiKey : null;
+
   return (
     <div className="ai-chat-panel">
       <div className="ai-chat-api-key-row">
         <button
-          className={`ai-chat-provider-btn${provider === 'lemonade' ? ' ai-chat-provider-btn--active' : ''}`}
-          onClick={() => setProvider('lemonade')}
-          title="Lemonade (yerel, ücretsiz)"
+          className={`ai-chat-provider-btn${provider === 'groq' ? ' ai-chat-provider-btn--active' : ''}`}
+          onClick={() => setProvider('groq')}
+          title="Groq (ücretsiz, hızlı)"
         >
-          🍋 Lemonade {lemonadeOk === false ? '(kapalı)' : lemonadeOk ? '(hazır)' : ''}
+          ⚡ Groq {groqKey ? '' : '(key yok)'}
         </button>
         <button
           className={`ai-chat-provider-btn${provider === 'gemini' ? ' ai-chat-provider-btn--active' : ''}`}
           onClick={() => setProvider('gemini')}
-          title="Gemini API"
+          title="Google Gemini"
         >
           ✨ Gemini {geminiKey ? '' : '(key yok)'}
         </button>
-        {provider === 'gemini' && (
+        <button
+          className={`ai-chat-provider-btn${provider === 'lemonade' ? ' ai-chat-provider-btn--active' : ''}`}
+          onClick={() => setProvider('lemonade')}
+          title="Lemonade (yerel)"
+        >
+          🍋 Lemonade {lemonadeOk ? '(hazır)' : '(kapalı)'}
+        </button>
+        {activeKey === null || (provider !== 'lemonade' && !activeKey) ? (
           <input
             type="password"
             className="ai-chat-api-key-input"
-            placeholder="Gemini API anahtarı..."
-            value={geminiKey}
+            placeholder={provider === 'groq' ? 'gsk_... (console.groq.com)' : 'Gemini API anahtarı...'}
+            value={provider === 'groq' ? groqKey : geminiKey}
             onChange={(e) => {
-              setGeminiKey(e.target.value);
-              apiKeyManager.storeKeyByType('gemini', e.target.value);
+              if (provider === 'groq') {
+                setGroqKey(e.target.value);
+                apiKeyManager.storeKeyByType('groq', e.target.value);
+              } else {
+                setGeminiKey(e.target.value);
+                apiKeyManager.storeKeyByType('gemini', e.target.value);
+              }
             }}
           />
-        )}
+        ) : null}
       </div>
 
       <div className="ai-chat-messages">
