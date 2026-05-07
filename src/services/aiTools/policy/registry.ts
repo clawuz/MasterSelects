@@ -152,6 +152,8 @@ const TOOL_POLICY_MAP = new Map<string, ToolPolicyEntry>([
   ['removeVertex', mutatingMedium()],
   ['updateVertex', mutatingMedium()],
   ['addClipSegment', mutatingMedium()],
+  ['addTextClip', mutatingMedium()],
+  ['addSolidClip', mutatingMedium()],
 
   // ── MUTATING LOW ──────────────────────────────────────────────────────
   ['createTrack', mutatingLow()],

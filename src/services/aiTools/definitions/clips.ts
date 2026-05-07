@@ -333,4 +333,74 @@ export const clipToolDefinitions: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'addTextClip',
+      description: 'Create a new text clip on the timeline with custom text content, color, and font size. Use this to add titles, captions, or any text overlay. If no trackId is provided, uses the first available video track.',
+      parameters: {
+        type: 'object',
+        properties: {
+          trackId: {
+            type: 'string',
+            description: 'ID of the video track to add the text clip to (optional, uses first video track if omitted)',
+          },
+          startTime: {
+            type: 'number',
+            description: 'Position on the timeline in seconds (default: 0)',
+          },
+          duration: {
+            type: 'number',
+            description: 'Duration of the text clip in seconds (default: 5)',
+          },
+          text: {
+            type: 'string',
+            description: 'The text content to display',
+          },
+          color: {
+            type: 'string',
+            description: 'Text color as hex (e.g. "#ff0000" for red, "#ffffff" for white)',
+          },
+          fontSize: {
+            type: 'number',
+            description: 'Font size in pixels (default: 72)',
+          },
+          backgroundColor: {
+            type: 'string',
+            description: 'Background color as hex (optional, transparent if omitted)',
+          },
+        },
+        required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'addSolidClip',
+      description: 'Create a solid color clip on the timeline. Useful as backgrounds, color mattes, or transitions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          trackId: {
+            type: 'string',
+            description: 'ID of the video track to add the clip to (optional, uses first video track if omitted)',
+          },
+          startTime: {
+            type: 'number',
+            description: 'Position on the timeline in seconds (default: 0)',
+          },
+          duration: {
+            type: 'number',
+            description: 'Duration in seconds (default: 5)',
+          },
+          color: {
+            type: 'string',
+            description: 'Background color as hex (e.g. "#ffffff" for white, "#000000" for black)',
+          },
+        },
+        required: [],
+      },
+    },
+  },
 ];

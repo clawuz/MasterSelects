@@ -27,6 +27,8 @@ import {
   handleSelectClips,
   handleClearSelection,
   handleAddClipSegment,
+  handleAddTextClip,
+  handleAddSolidClip,
 } from './clips';
 
 import {
@@ -187,6 +189,9 @@ const timelineHandlers: Record<string, (args: Record<string, unknown>, store: Re
   addVertex: handleAddVertex,
   removeVertex: handleRemoveVertex,
   updateVertex: handleUpdateVertex,
+  // Generative clips
+  addTextClip: handleAddTextClip,
+  addSolidClip: handleAddSolidClip,
 };
 
 const mediaHandlers: Record<string, (args: Record<string, unknown>, store: ReturnType<typeof useMediaStore.getState>, callerContext?: CallerContext) => Promise<ToolResult>> = {

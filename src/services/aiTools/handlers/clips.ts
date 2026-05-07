@@ -973,3 +973,68 @@ export async function handleAddClipSegment(
     },
   };
 }
+
+export async function handleAddTextClip(
+  args: Record<string, unknown>,
+  store: TimelineStore,
+): Promise<ToolResult> {
+  const startTime = (args.startTime as number | undefined) ?? 0;
+  const duration = (args.duration as number | undefined) ?? 5;
+  const text = (args.text as string | undefined) ?? 'Text';
+  const color = (args.color as string | undefined) ?? '#ffffff';
+  const fontSize = (args.fontSize as number | undefined) ?? 72;
+  const backgroundColor = args.backgroundColor as string | undefined;
+
+  // Find or use specified video track
+  let trackId = args.trackId as string | undefined;
+  if (!trackId) {
+    const videoTrack = store.tracks.find(t => t.type === 'video');
+    if (!videoTrack) {
+      return { success: false, error: 'No video track found. Create a video track first.' };
+    }
+    trackId = videoTrack.id;
+  }
+
+  const clipId = await store.addTextClip(trackId, startTime, duration);
+  if (!clipId) {
+    return { success: false, error: 'Failed to create text clip' };
+  }
+
+  // Apply text properties
+  const textProps: Record<string, unknown> = { text, color, fontSize };
+  if (backgroundColor !== undefined) textProps.backgroundColor = backgroundColor;
+  store.updateTextProperties(clipId, textProps as Parameters<typeof store.updateTextProperties>[1]);
+
+  return {
+    success: true,
+    data: { clipId, trackId, startTime, duration, text, color, fontSize },
+  };
+}
+
+export async function handleAddSolidClip(
+  args: Record<string, unknown>,
+  store: TimelineStore,
+): Promise<ToolResult> {
+  const startTime = (args.startTime as number | undefined) ?? 0;
+  const duration = (args.duration as number | undefined) ?? 5;
+  const color = (args.color as string | undefined) ?? '#000000';
+
+  let trackId = args.trackId as string | undefined;
+  if (!trackId) {
+    const videoTrack = store.tracks.find(t => t.type === 'video');
+    if (!videoTrack) {
+      return { success: false, error: 'No video track found. Create a video track first.' };
+    }
+    trackId = videoTrack.id;
+  }
+
+  const clipId = store.addSolidClip(trackId, startTime, color, duration);
+  if (!clipId) {
+    return { success: false, error: 'Failed to create solid clip' };
+  }
+
+  return {
+    success: true,
+    data: { clipId, trackId, startTime, duration, color },
+  };
+}
