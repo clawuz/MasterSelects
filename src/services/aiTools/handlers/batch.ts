@@ -6,6 +6,7 @@ import type { ToolResult } from '../types';
 import { executeToolInternal } from './index';
 import { setStaggerBudget, consumeStaggerDelay } from '../executionState';
 import { checkToolAccess } from '../policy';
+import { TOOL_ALIASES } from '../aliases';
 import type { CallerContext } from '../policy';
 
 interface BatchAction {
@@ -42,7 +43,8 @@ export async function handleExecuteBatch(
   // Pre-flight: check all sub-actions against policy before executing any
   const disallowed: string[] = [];
   for (const action of actions) {
-    const access = checkToolAccess(action.tool, callerContext);
+    const resolvedTool = TOOL_ALIASES[action.tool] ?? action.tool;
+    const access = checkToolAccess(resolvedTool, callerContext);
     if (!access.allowed) {
       disallowed.push(`${action.tool}: ${access.reason}`);
     }
@@ -81,8 +83,9 @@ export async function handleExecuteBatch(
     }
 
     try {
+      const resolvedTool = TOOL_ALIASES[action.tool] ?? action.tool;
       const result = await executeToolInternal(
-        action.tool,
+        resolvedTool,
         toolArgs,
         timelineStore,
         mediaStore,

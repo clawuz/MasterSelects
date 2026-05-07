@@ -14,6 +14,7 @@ import { executeToolInternal } from './handlers';
 import { handleExecuteBatch } from './handlers/batch';
 import { setAIExecutionActive, setStaggerBudget } from './executionState';
 import { checkToolAccess } from './policy';
+import { TOOL_ALIASES } from './aliases';
 import type { CallerContext } from './policy';
 
 // Re-export types
@@ -56,19 +57,7 @@ export { isAIExecutionActive } from './executionState';
  * Main entry point for AI chat integration.
  * @param callerContext identifies who is calling (chat, devBridge, etc.)
  */
-const TOOL_ALIASES: Record<string, string> = {
-  addClip: 'addVideoClip',
-  addVideo: 'addVideoClip',
-  addAudio: 'addAudioClip',
-  addImage: 'addImageClip',
-  addText: 'addTextClip',
-  cutClip: 'splitClip',
-  cut: 'splitClip',
-  delete: 'deleteClip',
-  remove: 'deleteClip',
-  move: 'moveClip',
-  trim: 'trimClip',
-};
+export { TOOL_ALIASES } from './aliases';
 
 export async function executeAITool(
   toolName: string,
