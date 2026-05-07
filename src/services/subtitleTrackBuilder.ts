@@ -47,7 +47,7 @@ function buildSubtitleTextProps() {
   };
 }
 
-export async function addSubtitlesToTimeline(entries: SrtEntry[]): Promise<void> {
+export async function addSubtitlesToTimeline(entries: SrtEntry[], timelineOffset: number = 0): Promise<void> {
   if (entries.length === 0) return;
 
   const store = useTimelineStore.getState();
@@ -59,11 +59,12 @@ export async function addSubtitlesToTimeline(entries: SrtEntry[]): Promise<void>
   }
 
   const subtitleTextProps = buildSubtitleTextProps();
-  log.info(`Adding ${entries.length} subtitle clips to track "${SUBTITLE_TRACK_NAME}" (paddingBottom=${subtitleTextProps.paddingBottom}px)`);
+  log.info(`Adding ${entries.length} subtitle clips to track "${SUBTITLE_TRACK_NAME}" (paddingBottom=${subtitleTextProps.paddingBottom}px, offset=${timelineOffset}s)`);
 
   for (const entry of entries) {
     const duration = Math.max(0.1, entry.end - entry.start);
-    const clipId = await useTimelineStore.getState().addTextClip(trackId!, entry.start, duration, true);
+    const startTime = Math.max(0, entry.start + timelineOffset);
+    const clipId = await useTimelineStore.getState().addTextClip(trackId!, startTime, duration, true);
     if (!clipId) {
       log.warn('Failed to create text clip for entry', entry);
       continue;

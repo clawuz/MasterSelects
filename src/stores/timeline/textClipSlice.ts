@@ -15,7 +15,7 @@ const log = Logger.create('TextClipSlice');
 
 export const createTextClipSlice: SliceCreator<TextClipActions> = (set, get) => ({
   addTextClip: async (trackId, startTime, duration = DEFAULT_TEXT_DURATION, skipMediaItem = false) => {
-    const { clips, tracks, updateDuration, invalidateCache } = get();
+    const { tracks, updateDuration, invalidateCache } = get();
     const track = tracks.find(t => t.id === trackId);
 
     if (!track || track.type !== 'video') {
@@ -53,7 +53,9 @@ export const createTextClipSlice: SliceCreator<TextClipActions> = (set, get) => 
       textClip.source = { ...textClip.source!, mediaFileId: mediaItemId };
     }
 
-    set({ clips: [...clips, textClip] });
+    // Re-read clips after await to avoid stale closure overwriting concurrent store updates
+    const freshClips = get().clips;
+    set({ clips: [...freshClips, textClip] });
     updateDuration();
     invalidateCache();
 

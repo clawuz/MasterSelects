@@ -142,8 +142,10 @@ export function TranscriptTab({ clipId, transcript, transcriptStatus, transcript
   const handleAddSubtitles = useCallback(async () => {
     if (!transcript.length) return;
     const { addSubtitlesToTimeline } = await import('../../../services/subtitleTrackBuilder');
-    await addSubtitlesToTimeline(groupWordsToSubtitles(transcript));
-  }, [transcript]);
+    // Convert source-relative word times to timeline-absolute positions
+    const timelineOffset = clipStartTime - inPoint;
+    await addSubtitlesToTimeline(groupWordsToSubtitles(transcript), timelineOffset);
+  }, [transcript, clipStartTime, inPoint]);
 
   const handleDownloadSrt = useCallback(() => {
     if (!transcript.length) return;

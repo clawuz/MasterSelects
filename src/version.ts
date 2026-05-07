@@ -93,11 +93,11 @@ export interface RawChangeEntry {
 }
 
 export function shouldAutoShowChangelog(
-  showChangelogOnStartup: boolean,
-  lastSeenChangelogVersion: string | null | undefined,
-  appVersion: string = APP_VERSION,
+  _showChangelogOnStartup: boolean,
+  _lastSeenChangelogVersion: string | null | undefined,
+  _appVersion: string = APP_VERSION,
 ): boolean {
-  return showChangelogOnStartup || lastSeenChangelogVersion !== appVersion;
+  return false;
 }
 
 // Import changelog data from JSON
