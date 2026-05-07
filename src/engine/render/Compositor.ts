@@ -206,7 +206,13 @@ export class Compositor {
           !complexEffects &&
           !hasColorCorrection &&
           !data.isDynamic;
-        const cacheLayerId = canCacheBindGroup ? layer.id : undefined;
+        // Include sourceClipId so different clips on the same track (same layer.id)
+        // don't share a bind group — e.g. sequential subtitle clips on one track.
+        // Key format: "${layer.id}:${sourceClipId}" so invalidateBindGroupCache(layer.id)
+        // still matches via startsWith(layerId + ':').
+        const cacheLayerId = canCacheBindGroup
+          ? `${layer.id}:${layer.sourceClipId ?? ''}`
+          : undefined;
         if (!canCacheBindGroup) {
           this.compositorPipeline.invalidateBindGroupCache(layer.id);
         }
