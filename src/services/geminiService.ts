@@ -16,7 +16,7 @@ export interface GeminiParsedResponse {
   rawContent: GeminiContentPart[];
 }
 
-interface GeminiContentPart {
+export interface GeminiContentPart {
   text?: string;
   functionCall?: { name: string; args: Record<string, unknown> };
   functionResponse?: { name: string; response: unknown };
