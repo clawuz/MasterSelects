@@ -56,11 +56,31 @@ export { isAIExecutionActive } from './executionState';
  * Main entry point for AI chat integration.
  * @param callerContext identifies who is calling (chat, devBridge, etc.)
  */
+const TOOL_ALIASES: Record<string, string> = {
+  addClip: 'addVideoClip',
+  addVideo: 'addVideoClip',
+  addAudio: 'addAudioClip',
+  addImage: 'addImageClip',
+  addText: 'addTextClip',
+  cutClip: 'splitClip',
+  cut: 'splitClip',
+  delete: 'deleteClip',
+  remove: 'deleteClip',
+  move: 'moveClip',
+  trim: 'trimClip',
+};
+
 export async function executeAITool(
   toolName: string,
   args: Record<string, unknown>,
   callerContext: CallerContext = 'internal',
 ): Promise<ToolResult> {
+  const resolved = TOOL_ALIASES[toolName] ?? toolName;
+  if (resolved !== toolName) {
+    log.debug(`Tool alias: ${toolName} → ${resolved}`);
+    return executeAITool(resolved, args, callerContext);
+  }
+
   // Policy gate: check if caller is allowed to execute this tool
   const access = checkToolAccess(toolName, callerContext);
   if (!access.allowed) {
