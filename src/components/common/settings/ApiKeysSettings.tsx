@@ -49,6 +49,7 @@ export function ApiKeysSettings({ localKeys, onKeyChange }: ApiKeysSettingsProps
     piapi: false,
     kieai: false,
     youtube: false,
+    gemini: false,
   });
 
   const toggleShowKey = (provider: keyof typeof showKeys) => {
@@ -64,6 +65,22 @@ export function ApiKeysSettings({ localKeys, onKeyChange }: ApiKeysSettingsProps
       <p className="settings-hint" style={{ marginTop: 0, marginBottom: 8 }}>
         Keys are stored locally and encrypted in your browser.
       </p>
+
+      <div className="settings-group">
+        <div className="settings-group-title">AI Chat</div>
+
+        <ApiKeyRow
+          label="Gemini API Key"
+          provider="gemini"
+          value={getKey('gemini')}
+          placeholder="Enter Gemini API key..."
+          linkUrl="https://aistudio.google.com/app/apikey"
+          linkText="Get API Key"
+          show={showKeys.gemini}
+          onToggle={() => toggleShowKey('gemini')}
+          onChange={(v) => onKeyChange('gemini', v)}
+        />
+      </div>
 
       <div className="settings-group">
         <div className="settings-group-title">Transcription</div>
