@@ -205,7 +205,7 @@ function compactParams(params: Record<string, unknown>): Record<string, unknown>
 }
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.1-8b-instant';
+const GROQ_MODEL = 'gemma2-9b-it';
 
 const GROQ_ESSENTIAL_TOOLS = new Set([
   'executeBatch', 'deleteClip', 'deleteClips', 'trimClip', 'splitClip',
