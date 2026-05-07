@@ -1107,3 +1107,40 @@
 .ai-chat-onboarding-dismiss:hover {
   background: var(--accent-hover);
 }
+
+.ai-chat-api-key-row {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color, #333);
+}
+
+.ai-chat-api-key-input {
+  width: 100%;
+  background: var(--input-bg, #1a1a1a);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+  color: var(--text-primary, #fff);
+  font-size: 12px;
+  padding: 4px 8px;
+  box-sizing: border-box;
+}
+
+.ai-chat-empty {
+  color: var(--text-secondary, #888);
+  font-size: 13px;
+  padding: 24px 16px;
+}
+
+.ai-chat-empty ul {
+  margin: 8px 0 0 16px;
+  line-height: 1.8;
+}
+
+.ai-chat-message--progress {
+  color: var(--text-secondary, #aaa);
+  font-style: italic;
+  font-size: 12px;
+}
+
+.ai-chat-message--error {
+  color: #ff6b6b;
+}
