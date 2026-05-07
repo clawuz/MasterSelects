@@ -65,7 +65,7 @@ function formatRecentProjectDate(timestamp: number): string {
   });
 }
 
-export function Toolbar({ onOpenChangelog, onOpenSplash }: ToolbarProps) {
+export function Toolbar({ onOpenChangelog: _onOpenChangelog, onOpenSplash: _onOpenSplash }: ToolbarProps) {
   const { isEngineReady, createOutputWindow } = useEngine();
   const targets = useRenderTargetStore((s) => s.targets);
   const outputTargets = useMemo(() => {
@@ -995,13 +995,6 @@ export function Toolbar({ onOpenChangelog, onOpenSplash }: ToolbarProps) {
               </button>
               <button className="menu-option" onClick={() => { window.dispatchEvent(new CustomEvent('start-timeline-tutorial')); closeMenu(); }}>
                 <span>Timeline Tour</span>
-              </button>
-              <div className="menu-separator" />
-              <button className="menu-option" onClick={() => { onOpenChangelog?.(); closeMenu(); }}>
-                <span>Changelog</span>
-              </button>
-              <button className="menu-option" onClick={() => { onOpenSplash?.(); closeMenu(); }}>
-                <span>About</span>
               </button>
             </div>
           )}
