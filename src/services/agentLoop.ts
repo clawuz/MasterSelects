@@ -257,21 +257,29 @@ export async function runGroqAgentLoop(
 
   try {
     while (step < MAX_STEPS) {
-      const response = await fetch(GROQ_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({ model: GROQ_MODEL, messages, tools, temperature: 0.2 }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Groq API error ${response.status}: ${errorText}`);
+      let response: Response | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        response = await fetch(GROQ_API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({ model: GROQ_MODEL, messages, tools, temperature: 0.2 }),
+        });
+        if (response.status === 429 || response.status === 413) {
+          const errText = await response.text();
+          const waitMatch = errText.match(/try again in ([\d.]+)s/);
+          const waitMs = waitMatch ? Math.ceil(parseFloat(waitMatch[1])) * 1000 + 500 : 20000;
+          onProgress(`⏳ Rate limit — ${Math.ceil(waitMs / 1000)}s bekleniyor...`);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+        break;
+      }
+      if (!response!.ok) {
+        const errorText = await response!.text();
+        throw new Error(`Groq API error ${response!.status}: ${errorText}`);
       }
 
-      const data = await response.json() as {
+      const data = await response!.json() as {
         choices: Array<{
           message: {
             content: string | null;
