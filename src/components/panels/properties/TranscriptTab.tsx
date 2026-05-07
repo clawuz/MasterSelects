@@ -3,6 +3,8 @@ import { useTimelineStore } from '../../../stores/timeline';
 import { useMediaStore } from '../../../stores/mediaStore';
 import type { TranscriptWord } from '../../../types';
 import type { SrtEntry } from '../../../services/nextjsApi';
+import { SUBTITLE_PRESETS } from '../../../services/subtitleTrackBuilder';
+import type { SubtitlePositionPreset } from '../../../services/subtitleTrackBuilder';
 
 const LANGUAGES = [
   { code: 'auto', name: 'Auto-Detect' },
@@ -77,6 +79,39 @@ export function TranscriptTab({ clipId, transcript, transcriptStatus, transcript
   const [editingText, setEditingText] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const [subtitlePresetId, setSubtitlePresetId] = useState(() => localStorage.getItem('subtitlePresetId') || 'auto');
+  const [customPaddingBottom, setCustomPaddingBottom] = useState(() => parseInt(localStorage.getItem('subtitleCustomPaddingBottom') || '100', 10));
+  const [customPaddingX, setCustomPaddingX] = useState(() => parseInt(localStorage.getItem('subtitleCustomPaddingX') || '96', 10));
+  const [customFontSize, setCustomFontSize] = useState(() => parseInt(localStorage.getItem('subtitleCustomFontSize') || '64', 10));
+
+  const activePreset = useMemo((): SubtitlePositionPreset => {
+    const found = SUBTITLE_PRESETS.find(p => p.id === subtitlePresetId) ?? SUBTITLE_PRESETS[0];
+    if (found.id === 'custom') {
+      return { ...found, paddingBottom: customPaddingBottom, paddingX: customPaddingX, fontSize: customFontSize };
+    }
+    return found;
+  }, [subtitlePresetId, customPaddingBottom, customPaddingX, customFontSize]);
+
+  const handlePresetChange = useCallback((id: string) => {
+    setSubtitlePresetId(id);
+    localStorage.setItem('subtitlePresetId', id);
+  }, []);
+
+  const handleCustomPaddingBottom = useCallback((v: number) => {
+    setCustomPaddingBottom(v);
+    localStorage.setItem('subtitleCustomPaddingBottom', String(v));
+  }, []);
+
+  const handleCustomPaddingX = useCallback((v: number) => {
+    setCustomPaddingX(v);
+    localStorage.setItem('subtitleCustomPaddingX', String(v));
+  }, []);
+
+  const handleCustomFontSize = useCallback((v: number) => {
+    setCustomFontSize(v);
+    localStorage.setItem('subtitleCustomFontSize', String(v));
+  }, []);
+
   const clipLocalTime = playheadPosition - clipStartTime + inPoint;
 
   const currentWordId = useMemo(() => {
@@ -142,10 +177,9 @@ export function TranscriptTab({ clipId, transcript, transcriptStatus, transcript
   const handleAddSubtitles = useCallback(async () => {
     if (!transcript.length) return;
     const { addSubtitlesToTimeline } = await import('../../../services/subtitleTrackBuilder');
-    // Convert source-relative word times to timeline-absolute positions
     const timelineOffset = clipStartTime - inPoint;
-    await addSubtitlesToTimeline(groupWordsToSubtitles(transcript), timelineOffset);
-  }, [transcript, clipStartTime, inPoint]);
+    await addSubtitlesToTimeline(groupWordsToSubtitles(transcript), timelineOffset, activePreset);
+  }, [transcript, clipStartTime, inPoint, activePreset]);
 
   const handleDownloadSrt = useCallback(() => {
     if (!transcript.length) return;
@@ -214,8 +248,37 @@ export function TranscriptTab({ clipId, transcript, transcriptStatus, transcript
           )}
         </div>
 
-        {/* Subtitle / Edit / SRT actions */}
+        {/* Subtitle position preset + actions */}
         {transcriptStatus === 'ready' && transcript.length > 0 && (
+          <>
+          <div className="control-row" style={{ marginTop: 'var(--sp-1)' }}>
+            <label>Altyazı Konumu</label>
+            <select value={subtitlePresetId} onChange={e => handlePresetChange(e.target.value)}>
+              {SUBTITLE_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+          </div>
+          {subtitlePresetId === 'custom' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+              <div className="control-row">
+                <label>Alt boşluk (px)</label>
+                <input type="number" min={0} max={900} value={customPaddingBottom}
+                  onChange={e => handleCustomPaddingBottom(Number(e.target.value))}
+                  style={{ width: '70px' }} />
+              </div>
+              <div className="control-row">
+                <label>Yan boşluk (px)</label>
+                <input type="number" min={0} max={800} value={customPaddingX}
+                  onChange={e => handleCustomPaddingX(Number(e.target.value))}
+                  style={{ width: '70px' }} />
+              </div>
+              <div className="control-row">
+                <label>Font boyutu</label>
+                <input type="number" min={20} max={200} value={customFontSize}
+                  onChange={e => handleCustomFontSize(Number(e.target.value))}
+                  style={{ width: '70px' }} />
+              </div>
+            </div>
+          )}
           <div className="transcript-tab-actions" style={{ marginTop: 'var(--sp-1)' }}>
             <button className="btn btn-sm btn-accent" onClick={handleAddSubtitles} title="Transkripti altyazı olarak timeline'a ekle">
               + Altyazı Ekle
@@ -231,6 +294,7 @@ export function TranscriptTab({ clipId, transcript, transcriptStatus, transcript
               SRT İndir
             </button>
           </div>
+          </>
         )}
 
         {/* Coverage bar */}
