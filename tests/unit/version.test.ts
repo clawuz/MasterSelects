@@ -160,15 +160,9 @@ describe('getChangelogCalendar', () => {
 });
 
 describe('shouldAutoShowChangelog', () => {
-  it('shows on every startup when the always-show setting is enabled', () => {
-    expect(shouldAutoShowChangelog(true, '1.3.6', '1.3.6')).toBe(true);
-  });
-
-  it('forces the changelog once after an update even when always-show is disabled', () => {
-    expect(shouldAutoShowChangelog(false, '1.3.5', '1.3.6')).toBe(true);
-  });
-
-  it('stays hidden after the current version was already acknowledged and always-show is disabled', () => {
+  it('always returns false (startup popup disabled)', () => {
+    expect(shouldAutoShowChangelog(true, '1.3.6', '1.3.6')).toBe(false);
+    expect(shouldAutoShowChangelog(false, '1.3.5', '1.3.6')).toBe(false);
     expect(shouldAutoShowChangelog(false, '1.3.6', '1.3.6')).toBe(false);
   });
 });
