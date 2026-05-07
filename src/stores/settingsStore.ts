@@ -65,6 +65,7 @@ interface APIKeys {
   // Legacy Kling keys (deprecated, use piapi instead)
   klingAccessKey: string;
   klingSecretKey: string;
+  gemini: string; // Google Gemini API key
 }
 
 // Autosave interval options (in minutes)
@@ -227,6 +228,7 @@ export const useSettingsStore = create<SettingsState>()(
         youtube: '',
         klingAccessKey: '',
         klingSecretKey: '',
+        gemini: '',
       },
       transcriptionProvider: 'server',
       previewQuality: 1, // Full quality by default

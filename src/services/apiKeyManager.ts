@@ -12,7 +12,7 @@ const STORE_NAME = 'api-keys';
 const ENCRYPTION_KEY_ID = 'encryption-key';
 
 // Supported API key types
-export type ApiKeyType = 'openai' | 'assemblyai' | 'deepgram' | 'piapi' | 'kieai' | 'youtube' | 'klingAccessKey' | 'klingSecretKey';
+export type ApiKeyType = 'openai' | 'assemblyai' | 'deepgram' | 'piapi' | 'kieai' | 'youtube' | 'klingAccessKey' | 'klingSecretKey' | 'gemini';
 
 // Key IDs for each API key type (stored in IndexedDB)
 const KEY_IDS: Record<ApiKeyType, string> = {
@@ -24,6 +24,7 @@ const KEY_IDS: Record<ApiKeyType, string> = {
   youtube: 'youtube-api-key',
   klingAccessKey: 'kling-access-key',
   klingSecretKey: 'kling-secret-key',
+  gemini: 'gemini-api-key',
 };
 
 // Legacy key ID for backwards compatibility
@@ -252,6 +253,7 @@ class ApiKeyManager {
       youtube: '',
       klingAccessKey: '',
       klingSecretKey: '',
+      gemini: '',
     };
 
     for (const keyType of Object.keys(KEY_IDS) as ApiKeyType[]) {
