@@ -79,4 +79,13 @@ describe('runAgentLoop', () => {
     const result = await runAgentLoop('loop forever', 'test-key', () => {});
     expect(result.error).toContain('maksimum');
   });
+
+  it('calls undo and returns error when sendGeminiMessage throws', async () => {
+    const { undo } = await import('../../src/stores/historyStore');
+    mockSend.mockRejectedValueOnce(new Error('network timeout'));
+
+    const result = await runAgentLoop('test', 'test-key', () => {});
+    expect(undo).toHaveBeenCalled();
+    expect(result.error).toContain('network timeout');
+  });
 });
