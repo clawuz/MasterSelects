@@ -207,6 +207,14 @@ function compactParams(params: Record<string, unknown>): Record<string, unknown>
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = 'llama-3.1-8b-instant';
 
+const GROQ_ESSENTIAL_TOOLS = new Set([
+  'executeBatch', 'deleteClip', 'deleteClips', 'trimClip', 'splitClip',
+  'splitClipAtTimes', 'moveClip', 'addVideoClip', 'addAudioClip', 'addImageClip',
+  'addTextClip', 'createTrack', 'deleteTrack', 'setClipSpeed', 'setClipVolume',
+  'addEffect', 'removeEffect', 'addTransition', 'removeTransition',
+  'setTransform', 'setPlayhead', 'reorderClips', 'setInOutPoints',
+]);
+
 interface GroqMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | null;
@@ -233,7 +241,9 @@ export async function runGroqAgentLoop(
     { role: 'user', content: userMessage },
   ];
 
-  const tools = AI_TOOLS.map((t) => ({
+  const tools = AI_TOOLS
+    .filter((t) => GROQ_ESSENTIAL_TOOLS.has(t.function.name))
+    .map((t) => ({
     type: 'function' as const,
     function: {
       name: t.function.name,
