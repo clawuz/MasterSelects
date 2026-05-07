@@ -10,18 +10,8 @@ import type { LemonadeMessage } from './lemonadeProvider';
 const log = Logger.create('AgentLoop');
 const MAX_STEPS = 20;
 
-const SYSTEM_PROMPT = `You are an AI video editing assistant with full access to the timeline and media library.
-You can edit existing clips, create new tracks, add effects and transitions, place media library items on the timeline, and build entire videos from scratch.
-
-CURRENT PROJECT STATE:
-{{CONTEXT}}
-
-RULES:
-1. Use executeBatch when performing multiple edits — it creates one undo point and is faster.
-2. Time values are always in seconds.
-3. Media library items have IDs you can use with addVideoClip, addAudioClip, addImageClip tools.
-4. After all tool calls are done, give a short human-readable summary of what you did.
-5. If a tool call fails, stop and report the error — do not try to work around it.`;
+const SYSTEM_PROMPT = `You are a video editing AI. Use tools to edit the timeline. State: {{CONTEXT}}
+Rules: Use executeBatch for multiple edits. Time in seconds. Reply briefly in the user's language.`;
 
 export interface AgentResult {
   text: string;
@@ -204,7 +194,7 @@ export async function runAgentLoop(
 }
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const GROQ_MODEL = 'llama-3.1-8b-instant';
 
 interface GroqMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';

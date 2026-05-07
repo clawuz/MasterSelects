@@ -1,8 +1,8 @@
 import { useTimelineStore } from '../stores/timeline';
 import { useMediaStore } from '../stores/mediaStore';
 
-const MAX_TRANSCRIPT_CHARS = 500;
-const MAX_MEDIA_ITEMS = 200;
+const MAX_TRANSCRIPT_CHARS = 200;
+const MAX_MEDIA_ITEMS = 50;
 
 interface ContextClip {
   id: string;
