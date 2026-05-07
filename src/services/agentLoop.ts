@@ -3,7 +3,7 @@ import { captureSnapshot, undo } from '../stores/historyStore';
 import { buildContext } from './contextBuilder';
 import { sendGeminiMessage, buildFunctionResponsePart } from './geminiService';
 import { executeAITool, AI_TOOLS } from './aiTools';
-import type { GeminiMessage } from './geminiService';
+import type { GeminiMessage, GeminiContentPart } from './geminiService';
 
 const log = Logger.create('AgentLoop');
 const MAX_STEPS = 20;
@@ -62,7 +62,7 @@ export async function runAgentLoop(
       messages.push({ role: 'model', parts: response.rawContent });
 
       // Execute each tool call and collect results
-      const responseParts = [];
+      const responseParts: GeminiContentPart[] = [];
       for (const toolCall of response.toolCalls) {
         onProgress(`🔧 ${toolCall.name} çalışıyor... (${step}/${MAX_STEPS})`);
         log.debug(`Executing tool: ${toolCall.name}`, toolCall.args);
