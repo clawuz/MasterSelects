@@ -9,7 +9,7 @@ vi.mock('../../src/stores/timeline', () => ({
         id: 'clip_1', trackId: 'track_1', name: 'intro.mp4',
         startTime: 0, duration: 10, inPoint: 0,
         transcriptStatus: 'ready',
-        transcript: [{ id: 'word_1', text: 'Hello', start: 0.1, end: 0.5 }],
+        transcript: Array.from({ length: 120 }, (_, i) => ({ id: `word_${i}`, text: `word${i}`, start: i * 0.5, end: i * 0.5 + 0.4 })),
       }],
       playheadPosition: 2.5,
       duration: 10,
@@ -48,7 +48,9 @@ describe('buildContext', () => {
     const parsed = JSON.parse(ctx);
     const clip = parsed.timeline.tracks[0].clips[0];
     expect(typeof clip.transcript).toBe('string');
-    expect(clip.transcript.length).toBeLessThanOrEqual(500);
+    // Truncation adds ellipsis, so max is 501 chars (500 + '…')
+    expect(clip.transcript.length).toBeLessThanOrEqual(501);
+    expect(clip.transcript.endsWith('…')).toBe(true);
   });
 
   it('includes playhead position and total duration', () => {
