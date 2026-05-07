@@ -990,12 +990,6 @@ export function Toolbar({ onOpenChangelog: _onOpenChangelog, onOpenSplash: _onOp
               <button className="menu-option" onClick={() => { window.dispatchEvent(new CustomEvent('open-tutorial-campaigns')); closeMenu(); }}>
                 <span>Tutorials</span>
               </button>
-              <button className="menu-option" onClick={() => { window.dispatchEvent(new CustomEvent('start-tutorial')); closeMenu(); }}>
-                <span>Quick Tour</span>
-              </button>
-              <button className="menu-option" onClick={() => { window.dispatchEvent(new CustomEvent('start-timeline-tutorial')); closeMenu(); }}>
-                <span>Timeline Tour</span>
-              </button>
             </div>
           )}
         </div>

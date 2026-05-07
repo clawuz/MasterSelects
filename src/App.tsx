@@ -213,18 +213,12 @@ function App() {
     // After welcome, show splash screen with small delay for animation
     if (shouldShowChangelogOnStartup) {
       setTimeout(() => setShowSplash(true), 300);
-    } else if (!hasSeenTutorial) {
-      // No splash → start tutorial directly
-      setTimeout(() => setShowTutorial(true), 200);
     }
   }, [hasSeenTutorial, shouldShowChangelogOnStartup]);
 
   const handleSplashClose = useCallback(() => {
     setShowSplash(false);
-    if (!hasSeenTutorial) {
-      setTimeout(() => setShowTutorial(true), 200);
-    }
-  }, [hasSeenTutorial]);
+  }, []);
 
   const handleSplashOpenChangelog = useCallback(() => {
     setShowSplash(false);
@@ -233,10 +227,7 @@ function App() {
 
   const handleChangelogClose = useCallback(() => {
     setShowChangelog(false);
-    if (!hasSeenTutorial) {
-      setTimeout(() => setShowTutorial(true), 200);
-    }
-  }, [hasSeenTutorial]);
+  }, []);
 
   const handleTutorialClose = useCallback(() => {
     if (tutorialPart === 1 && !hasSeenTutorialPart2) {
