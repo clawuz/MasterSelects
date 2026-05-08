@@ -19,6 +19,10 @@ Rules:
 - To add text on a background: use addSolidClip (background color) + addTextClip (text content, color, fontSize).
 - To add text/solid clips, no mediaFileId needed — just trackId (optional), startTime, duration.
 - If State.timeline.tracks is empty, create a track first with createTrack before adding clips.
+- To add a subtitle or text overlay: use addTextClip (NOT addEffect).
+- There is NO "text" effect type. For text use addTextClip with text, color, fontSize params.
+- To extend a clip duration: use trimClip with outPoint = clip.startTime + desiredDuration.
+- To duplicate a clip: use addClipSegment with the same mediaFileId, new startTime, inPoint=0, outPoint=duration.
 - Reply briefly in the user's language.`;
 
 export interface AgentResult {
@@ -217,10 +221,11 @@ const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 const GROQ_ESSENTIAL_TOOLS = new Set([
   'executeBatch', 'deleteClip', 'deleteClips', 'trimClip', 'splitClip',
-  'splitClipAtTimes', 'moveClip', 'addVideoClip', 'addAudioClip', 'addImageClip',
-  'addTextClip', 'createTrack', 'deleteTrack', 'setClipSpeed', 'setClipVolume',
-  'addEffect', 'removeEffect', 'addTransition', 'removeTransition',
-  'setTransform', 'setPlayhead', 'reorderClips', 'setInOutPoints',
+  'splitClipAtTimes', 'moveClip', 'addClipSegment',
+  'addTextClip', 'addSolidClip', 'createTrack', 'deleteTrack',
+  'setClipSpeed', 'addEffect', 'removeEffect', 'updateEffect',
+  'addTransition', 'removeTransition',
+  'setTransform', 'setPlayhead', 'reorderClips',
 ]);
 
 interface GroqMessage {
@@ -255,7 +260,7 @@ export async function runGroqAgentLoop(
     type: 'function' as const,
     function: {
       name: t.function.name,
-      description: t.function.description.slice(0, 60),
+      description: t.function.description.slice(0, 120),
       parameters: compactParams(t.function.parameters),
     },
   }));
