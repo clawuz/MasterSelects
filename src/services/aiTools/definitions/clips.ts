@@ -377,6 +377,31 @@ export const clipToolDefinitions: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'moveClipRangeToEnd',
+      description: 'Extract a time range from a clip and move it to the end of the timeline. Use this when the user wants to cut/remove a segment and re-add it at the end.',
+      parameters: {
+        type: 'object',
+        properties: {
+          clipId: {
+            type: 'string',
+            description: 'ID of the clip containing the range to move — from getTimelineState or context',
+          },
+          rangeStart: {
+            type: 'number',
+            description: 'Start of the range in timeline seconds (e.g. 10)',
+          },
+          rangeEnd: {
+            type: 'number',
+            description: 'End of the range in timeline seconds (e.g. 11)',
+          },
+        },
+        required: ['clipId', 'rangeStart', 'rangeEnd'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'addSolidClip',
       description: 'Create a solid color clip on the timeline. Useful as backgrounds, color mattes, or transitions.',
       parameters: {

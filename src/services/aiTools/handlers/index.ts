@@ -29,6 +29,7 @@ import {
   handleAddClipSegment,
   handleAddTextClip,
   handleAddSolidClip,
+  handleMoveClipRangeToEnd,
 } from './clips';
 
 import {
@@ -192,6 +193,7 @@ const timelineHandlers: Record<string, (args: Record<string, unknown>, store: Re
   // Generative clips
   addTextClip: handleAddTextClip,
   addSolidClip: handleAddSolidClip,
+  moveClipRangeToEnd: handleMoveClipRangeToEnd,
 };
 
 const mediaHandlers: Record<string, (args: Record<string, unknown>, store: ReturnType<typeof useMediaStore.getState>, callerContext?: CallerContext) => Promise<ToolResult>> = {

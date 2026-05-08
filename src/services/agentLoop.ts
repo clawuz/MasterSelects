@@ -23,7 +23,7 @@ Rules:
 - There is NO "text" effect type. For text use addTextClip with text, color, fontSize params.
 - To extend a clip duration: use trimClip with outPoint = clip.startTime + desiredDuration.
 - To duplicate a clip: use addClipSegment with the same mediaFileId, new startTime, inPoint=0, outPoint=duration.
-- To cut a time range from a clip AND move it to end: (1) note the segment inPoint/outPoint, (2) cutRangesFromClip to remove it, (3) addClipSegment with the same mediaFileId at the new end position using those inPoint/outPoint values.
+- To cut a time range from a clip AND move it to end: use moveClipRangeToEnd (single atomic tool) with clipId, rangeStart, rangeEnd.
 - Reply briefly in the user's language.`;
 
 export interface AgentResult {
@@ -224,7 +224,7 @@ const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 const GROQ_ESSENTIAL_TOOLS = new Set([
   'executeBatch', 'deleteClip', 'deleteClips', 'trimClip', 'splitClip',
-  'splitClipAtTimes', 'cutRangesFromClip', 'moveClip', 'addClipSegment',
+  'splitClipAtTimes', 'cutRangesFromClip', 'moveClipRangeToEnd', 'moveClip', 'addClipSegment',
   'addTextClip', 'addSolidClip', 'createTrack', 'deleteTrack',
   'setClipSpeed', 'addEffect', 'removeEffect', 'updateEffect',
   'addTransition', 'removeTransition',

@@ -1032,3 +1032,76 @@ export async function handleAddSolidClip(
     data: { clipId, trackId, startTime, duration, color },
   };
 }
+
+/**
+ * Atomically extracts a time range from a clip and re-inserts it at the end of the timeline.
+ * Handles the split-cut-reinsert sequence in one operation so the model doesn't need
+ * to chain tool results (which is impossible inside executeBatch).
+ */
+export async function handleMoveClipRangeToEnd(
+  args: Record<string, unknown>,
+  _store?: TimelineStore,
+): Promise<ToolResult> {
+  const clipId = args.clipId as string;
+  const rangeStart = args.rangeStart as number;
+  const rangeEnd = args.rangeEnd as number;
+
+  if (rangeStart >= rangeEnd) {
+    return { success: false, error: 'rangeStart must be less than rangeEnd' };
+  }
+
+  const store = useTimelineStore.getState();
+  const sourceClip = store.clips.find(c => c.id === clipId);
+  if (!sourceClip) {
+    return { success: false, error: `Clip not found: ${clipId}` };
+  }
+
+  const trackId = sourceClip.trackId;
+
+  // Step 1: Split at rangeEnd (if not at boundary)
+  const clipsBeforeEnd = useTimelineStore.getState().clips;
+  const clipAtEnd = clipsBeforeEnd.find(c =>
+    c.trackId === trackId && c.startTime < rangeEnd && c.startTime + c.duration > rangeEnd + 0.01
+  );
+  if (clipAtEnd) {
+    useTimelineStore.getState().splitClip(clipAtEnd.id, rangeEnd);
+  }
+
+  // Step 2: Split at rangeStart (if not at boundary)
+  const clipsBeforeStart = useTimelineStore.getState().clips;
+  const clipAtStart = clipsBeforeStart.find(c =>
+    c.trackId === trackId && c.startTime < rangeStart + 0.01 && c.startTime + c.duration > rangeStart + 0.01
+  );
+  if (clipAtStart && clipAtStart.startTime < rangeStart - 0.01) {
+    useTimelineStore.getState().splitClip(clipAtStart.id, rangeStart);
+  }
+
+  // Step 3: Find the segment clip (starts at rangeStart)
+  const clipsAfterSplits = useTimelineStore.getState().clips;
+  const segmentClip = clipsAfterSplits.find(c =>
+    c.trackId === trackId && Math.abs(c.startTime - rangeStart) < 0.1
+  );
+
+  if (!segmentClip) {
+    return { success: false, error: 'Could not isolate the clip segment after splitting' };
+  }
+
+  const segmentDuration = segmentClip.duration;
+
+  // Step 4: Find the current end of the timeline
+  const timelineEnd = useTimelineStore.getState().duration;
+
+  // Step 5: Move the segment to the end
+  useTimelineStore.getState().moveClip(segmentClip.id, timelineEnd, trackId);
+
+  return {
+    success: true,
+    data: {
+      segmentClipId: segmentClip.id,
+      rangeStart,
+      rangeEnd,
+      movedTo: timelineEnd,
+      duration: segmentDuration,
+    },
+  };
+}
