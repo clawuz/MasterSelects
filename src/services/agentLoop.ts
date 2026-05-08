@@ -23,6 +23,7 @@ Rules:
 - There is NO "text" effect type. For text use addTextClip with text, color, fontSize params.
 - To extend a clip duration: use trimClip with outPoint = clip.startTime + desiredDuration.
 - To duplicate a clip: use addClipSegment with the same mediaFileId, new startTime, inPoint=0, outPoint=duration.
+- To cut a time range from a clip AND move it to end: (1) note the segment inPoint/outPoint, (2) cutRangesFromClip to remove it, (3) addClipSegment with the same mediaFileId at the new end position using those inPoint/outPoint values.
 - Reply briefly in the user's language.`;
 
 export interface AgentResult {
@@ -95,12 +96,13 @@ export async function runLemonadeAgentLoop(
         const result = await executeAITool(toolCall.name, args, 'chat');
 
         if (!result.success) {
-          log.warn(`Tool ${toolCall.name} failed: ${result.error}`);
+          const errMsg = result.error ?? (result.data ? JSON.stringify(result.data) : 'bilinmeyen hata');
+          log.warn(`Tool ${toolCall.name} failed: ${errMsg}`);
           undo();
           return {
             text: '',
             stepsUsed: step,
-            error: `${toolCall.name} aracı başarısız oldu: ${result.error}. Değişiklikler geri alındı.`,
+            error: `${toolCall.name} aracı başarısız oldu: ${errMsg}. Değişiklikler geri alındı.`,
           };
         }
 
@@ -172,12 +174,13 @@ export async function runAgentLoop(
         const result = await executeAITool(toolCall.name, toolCall.args, 'chat');
 
         if (!result.success) {
-          log.warn(`Tool ${toolCall.name} failed: ${result.error}`);
+          const errMsg = result.error ?? (result.data ? JSON.stringify(result.data) : 'bilinmeyen hata');
+          log.warn(`Tool ${toolCall.name} failed: ${errMsg}`);
           undo();
           return {
             text: '',
             stepsUsed: step,
-            error: `${toolCall.name} aracı başarısız oldu: ${result.error}. Değişiklikler geri alındı.`,
+            error: `${toolCall.name} aracı başarısız oldu: ${errMsg}. Değişiklikler geri alındı.`,
           };
         }
 
@@ -221,7 +224,7 @@ const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 const GROQ_ESSENTIAL_TOOLS = new Set([
   'executeBatch', 'deleteClip', 'deleteClips', 'trimClip', 'splitClip',
-  'splitClipAtTimes', 'moveClip', 'addClipSegment',
+  'splitClipAtTimes', 'cutRangesFromClip', 'moveClip', 'addClipSegment',
   'addTextClip', 'addSolidClip', 'createTrack', 'deleteTrack',
   'setClipSpeed', 'addEffect', 'removeEffect', 'updateEffect',
   'addTransition', 'removeTransition',
@@ -339,12 +342,13 @@ export async function runGroqAgentLoop(
         const result = await executeAITool(toolCall.function.name, args, 'chat');
 
         if (!result.success) {
-          log.warn(`Tool ${toolCall.function.name} failed: ${result.error}`);
+          const errMsg = result.error ?? (result.data ? JSON.stringify(result.data) : 'bilinmeyen hata');
+          log.warn(`Tool ${toolCall.function.name} failed: ${errMsg}`);
           undo();
           return {
             text: '',
             stepsUsed: step,
-            error: `${toolCall.function.name} aracı başarısız oldu: ${result.error}. Değişiklikler geri alındı.`,
+            error: `${toolCall.function.name} aracı başarısız oldu: ${errMsg}. Değişiklikler geri alındı.`,
           };
         }
 
