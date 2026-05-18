@@ -45,7 +45,7 @@ function persistChangelogStateToProject(
 export type ThemeMode = 'dark' | 'light' | 'midnight' | 'system' | 'crazy' | 'custom';
 
 // Transcription provider options
-export type TranscriptionProvider = 'local' | 'server' | 'openai' | 'assemblyai' | 'deepgram';
+export type TranscriptionProvider = 'local' | 'server' | 'openai' | 'assemblyai' | 'deepgram' | 'groq';
 
 // Preview quality options (multiplier on base resolution)
 export type PreviewQuality = 1 | 0.5 | 0.25;
