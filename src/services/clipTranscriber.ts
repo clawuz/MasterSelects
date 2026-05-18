@@ -289,6 +289,9 @@ export async function transcribeClip(clipId: string, language: string = 'auto', 
           case 'deepgram':
             words = await transcribeWithDeepgram(clipId, audioBlob, language, apiKey!, rangeStart);
             break;
+          case 'groq':
+            words = await transcribeWithGroq(clipId, audioBlob, language, apiKey!, rangeStart);
+            break;
           default:
             throw new Error(`Unknown provider: ${transcriptionProvider}`);
         }
@@ -859,6 +862,114 @@ async function transcribeWithOpenAI(
   }
 
   return allWords;
+}
+
+const GROQ_MAX_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Transcribe using Groq Whisper API (whisper-large-v3)
+ * Automatically splits audio if it exceeds the 25MB API limit
+ */
+async function transcribeWithGroq(
+  clipId: string,
+  audioBlob: Blob,
+  language: string,
+  apiKey: string,
+  inPointOffset: number
+): Promise<TranscriptWord[]> {
+  if (audioBlob.size <= GROQ_MAX_BYTES) {
+    updateClipTranscript(clipId, { progress: 20, message: 'Sending to Groq...' });
+    const rawWords = await groqSingleRequest(audioBlob, language, apiKey);
+    updateClipTranscript(clipId, { progress: 80, message: 'Processing response...' });
+    return rawWords.map((word, index) => ({
+      id: `word-${index}`,
+      text: word.word,
+      start: (word.start || 0) + inPointOffset,
+      end: (word.end || (word.start + 0.1)) + inPointOffset,
+      confidence: 1,
+      speaker: 'Speaker 1',
+    }));
+  }
+
+  log.info(`Audio WAV is ${(audioBlob.size / 1024 / 1024).toFixed(1)}MB, splitting for Groq...`);
+  updateClipTranscript(clipId, { progress: 10, message: 'Audio too large, splitting...' });
+
+  const audioContext = new AudioContext();
+  const arrayBuffer = await audioBlob.arrayBuffer();
+  const fullBuffer = await audioContext.decodeAudioData(arrayBuffer);
+  audioContext.close();
+
+  const chunks = splitAudioBuffer(fullBuffer, GROQ_MAX_BYTES);
+  log.info(`Split into ${chunks.length} chunks`);
+
+  const allWords: TranscriptWord[] = [];
+  let globalWordIndex = 0;
+  const sampleRate = fullBuffer.sampleRate;
+  let sampleOffset = 0;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkTimeOffset = sampleOffset / sampleRate;
+    const progressBase = 15 + (70 * i / chunks.length);
+    const progressEnd = 15 + (70 * (i + 1) / chunks.length);
+
+    updateClipTranscript(clipId, {
+      progress: Math.round(progressBase),
+      message: `Transcribing chunk ${i + 1}/${chunks.length}...`,
+    });
+
+    const chunkWav = await audioBufferToWav(chunks[i]);
+    const rawWords = await groqSingleRequest(chunkWav, language, apiKey);
+
+    for (const word of rawWords) {
+      allWords.push({
+        id: `word-${globalWordIndex++}`,
+        text: word.word,
+        start: (word.start || 0) + chunkTimeOffset + inPointOffset,
+        end: (word.end || (word.start + 0.1)) + chunkTimeOffset + inPointOffset,
+        confidence: 1,
+        speaker: 'Speaker 1',
+      });
+    }
+
+    updateClipTranscript(clipId, {
+      progress: Math.round(progressEnd),
+      words: allWords,
+      message: `Chunk ${i + 1}/${chunks.length} done (${allWords.length} words)`,
+    });
+
+    sampleOffset += chunks[i].length;
+  }
+
+  return allWords;
+}
+
+async function groqSingleRequest(
+  audioBlob: Blob,
+  language: string,
+  apiKey: string,
+): Promise<Array<{ word: string; start: number; end: number }>> {
+  const formData = new FormData();
+  formData.append('file', audioBlob, 'audio.wav');
+  formData.append('model', 'whisper-large-v3');
+  if (language !== 'auto') {
+    formData.append('language', language);
+  }
+  formData.append('response_format', 'verbose_json');
+  formData.append('timestamp_granularities[]', 'word');
+
+  const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: { message: response.statusText } }));
+    throw new Error(`Groq API error: ${response.status}: ${error.error?.message || response.statusText}`);
+  }
+
+  const result = await response.json() as { words?: Array<{ word: string; start: number; end: number }> };
+  return result.words || [];
 }
 
 /**
