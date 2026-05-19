@@ -864,7 +864,7 @@ async function transcribeWithOpenAI(
   return allWords;
 }
 
-const GROQ_MAX_BYTES = 25 * 1024 * 1024;
+const GROQ_MAX_BYTES = 24 * 1024 * 1024;
 
 /**
  * Transcribe using Groq Whisper API (whisper-large-v3)
@@ -885,7 +885,7 @@ async function transcribeWithGroq(
       id: `word-${index}`,
       text: word.word,
       start: (word.start || 0) + inPointOffset,
-      end: (word.end || (word.start + 0.1)) + inPointOffset,
+      end: (word.end || word.start + 0.1) + inPointOffset,
       confidence: 1,
       speaker: 'Speaker 1',
     }));
@@ -925,7 +925,7 @@ async function transcribeWithGroq(
         id: `word-${globalWordIndex++}`,
         text: word.word,
         start: (word.start || 0) + chunkTimeOffset + inPointOffset,
-        end: (word.end || (word.start + 0.1)) + chunkTimeOffset + inPointOffset,
+        end: (word.end || word.start + 0.1) + chunkTimeOffset + inPointOffset,
         confidence: 1,
         speaker: 'Speaker 1',
       });
