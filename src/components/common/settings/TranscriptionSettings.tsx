@@ -9,6 +9,7 @@ const providers: { id: TranscriptionProvider; label: string; description: string
   { id: 'openai', label: 'OpenAI Whisper API', description: 'High accuracy, $0.006/minute. Requires API key.' },
   { id: 'assemblyai', label: 'AssemblyAI', description: 'Excellent accuracy, speaker diarization. $0.015/minute.' },
   { id: 'deepgram', label: 'Deepgram', description: 'Fast, good accuracy. $0.0125/minute.' },
+  { id: 'groq', label: 'Groq (Whisper Large v3)', description: 'Hızlı, yüksek kalite. $0.02/saat. Groq API key gerekli.' },
   { id: 'local', label: 'Browser Whisper (tiny)', description: 'Tarayıcıda çalışır, ~100MB indirir. Düşük doğruluk.' },
 ];
 
