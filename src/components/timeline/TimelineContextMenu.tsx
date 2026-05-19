@@ -1,13 +1,17 @@
 // TimelineContextMenu - Right-click context menu for timeline clips
 // Extracted from Timeline.tsx for better maintainability
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import { handleSubmenuHover, handleSubmenuLeave } from '../panels/media/submenuPosition';
 import type { TimelineClip } from '../../types';
 import type { MediaFile } from '../../stores/mediaStore';
 import type { ContextMenuState } from './types';
 import { useContextMenuPosition } from '../../hooks/useContextMenuPosition';
 import { useMediaStore } from '../../stores/mediaStore';
+import { useTimelineStore } from '../../stores/timeline';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { TRANSLATION_LANGUAGES } from '../../services/groqTranslationService';
+import type { TranslationEntry } from '../../services/groqTranslationService';
 import { projectFileService } from '../../services/projectFileService';
 import { Logger } from '../../services/logger';
 import { LABEL_COLORS, getLabelHex } from '../panels/media/labelColors';
@@ -51,6 +55,21 @@ export function TimelineContextMenu({
   showInExplorer,
 }: TimelineContextMenuProps) {
   const { menuRef: contextMenuRef, adjustedPosition: contextMenuPosition } = useContextMenuPosition(contextMenu);
+
+  const [showTranslateModal, setShowTranslateModal] = useState(false);
+  const [translateLang, setTranslateLang] = useState('en');
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [translateProgress, setTranslateProgress] = useState(0);
+
+  const tracks = useTimelineStore(s => s.tracks);
+  const clips = useTimelineStore(s => s.clips);
+  const groqKey = useSettingsStore(s => s.apiKeys.groq ?? '');
+
+  const contextClip = contextMenu?.clipId ? clipMap.get(contextMenu.clipId) : null;
+  const contextTrack = contextClip
+    ? tracks.find(t => t.id === contextClip.trackId)
+    : null;
+  const isSubtitleTrack = !!contextTrack?.name.startsWith('Subtitles');
 
   // Get the media file for a clip
   const getMediaFileForClip = useCallback(
@@ -153,10 +172,43 @@ export function TimelineContextMenu({
     setContextMenu(null);
   };
 
-  if (!contextMenu) return null;
+  const handleTranslateTrack = async () => {
+    if (!contextTrack || !groqKey) return;
+    setIsTranslating(true);
+    setTranslateProgress(0);
+    setShowTranslateModal(false);
 
-  const mediaFile = getMediaFileForClip(contextMenu.clipId);
-  const clip = clipMap.get(contextMenu.clipId);
+    try {
+      const langEntry = TRANSLATION_LANGUAGES.find(l => l.code === translateLang);
+      const langName = langEntry?.name ?? translateLang;
+
+      const trackClips = clips
+        .filter(c => c.trackId === contextTrack.id && c.textProperties?.text)
+        .sort((a, b) => a.startTime - b.startTime);
+
+      const entries: TranslationEntry[] = trackClips.map(c => ({
+        start: c.startTime,
+        end: c.startTime + c.duration,
+        text: c.textProperties!.text,
+      }));
+
+      if (!entries.length) return;
+
+      const { translateSubtitles } = await import('../../services/groqTranslationService');
+      const translated = await translateSubtitles(entries, translateLang, langName, groqKey, setTranslateProgress);
+
+      const { addSubtitlesToTimeline } = await import('../../services/subtitleTrackBuilder');
+      await addSubtitlesToTimeline(translated, 0, undefined, `Subtitles [${translateLang.toUpperCase()}]`);
+    } catch (err) {
+      log.error('Translation failed', err);
+    } finally {
+      setIsTranslating(false);
+      setTranslateProgress(0);
+    }
+  };
+
+  const mediaFile = contextMenu ? getMediaFileForClip(contextMenu.clipId) : null;
+  const clip = contextMenu ? clipMap.get(contextMenu.clipId) : undefined;
   const isVideo = clip?.source?.type === 'video';
   const isGenerating = mediaFile?.proxyStatus === 'generating';
   const hasProxy = mediaFile?.proxyStatus === 'ready';
@@ -216,6 +268,8 @@ export function TimelineContextMenu({
   const { mediaItemId, currentColor } = resolveMediaItemColor();
 
   return (
+    <>
+    {contextMenu && (
     <div
       ref={contextMenuRef}
       className="timeline-context-menu"
@@ -411,6 +465,30 @@ export function TimelineContextMenu({
         </div>
       </div>
 
+      {isSubtitleTrack && (
+        <>
+          <div className="context-menu-separator" />
+          {groqKey ? (
+            <div
+              className="context-menu-item"
+              onClick={() => {
+                setShowTranslateModal(true);
+                setContextMenu(null);
+              }}
+            >
+              Çevir...
+            </div>
+          ) : (
+            <div
+              className="context-menu-item context-menu-item--disabled"
+              title="Ayarlar > API Keys bölümüne Groq key ekleyin"
+            >
+              Çevir... (Groq key yok)
+            </div>
+          )}
+        </>
+      )}
+
       <div className="context-menu-separator" />
       <div
         className="context-menu-item danger"
@@ -424,5 +502,32 @@ export function TimelineContextMenu({
         Delete Clip
       </div>
     </div>
+    )}
+    {showTranslateModal && (
+      <div className="translate-modal-backdrop" onClick={() => setShowTranslateModal(false)}>
+        <div className="translate-modal" onClick={e => e.stopPropagation()}>
+          <div className="translate-modal-title">Altyazıları Çevir</div>
+          <select
+            value={translateLang}
+            onChange={e => setTranslateLang(e.target.value)}
+            className="translate-lang-select"
+          >
+            {TRANSLATION_LANGUAGES.map(l => (
+              <option key={l.code} value={l.code}>{l.name}</option>
+            ))}
+          </select>
+          <div className="translate-modal-actions">
+            <button onClick={() => setShowTranslateModal(false)}>İptal</button>
+            <button className="btn-translate-confirm" onClick={handleTranslateTrack}>Çevir</button>
+          </div>
+        </div>
+      </div>
+    )}
+    {isTranslating && (
+      <div className="translate-progress-toast">
+        Çevriliyor... {translateProgress}%
+      </div>
+    )}
+    </>
   );
 }
