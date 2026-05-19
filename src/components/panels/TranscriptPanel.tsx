@@ -4,6 +4,9 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useTimelineStore } from '../../stores/timeline';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { TRANSLATION_LANGUAGES } from '../../services/groqTranslationService';
+import type { TranslationEntry } from '../../services/groqTranslationService';
 import type { TranscriptWord } from '../../types';
 import './TranscriptPanel.css';
 
@@ -117,14 +120,24 @@ export function TranscriptPanel() {
   });
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const [translateLang, setTranslateLang] = useState('en');
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [translateProgress, setTranslateProgress] = useState(0);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+
+  const { apiKeys } = useSettingsStore(useShallow(s => ({ apiKeys: s.apiKeys })));
+  const groqKey = apiKeys['groq'] ?? '';
+
   // Timeline store
   const {
     clips,
+    tracks,
     selectedClipIds,
     playheadPosition,
     setPlayheadPosition,
   } = useTimelineStore(useShallow(s => ({
     clips: s.clips,
+    tracks: s.tracks,
     selectedClipIds: s.selectedClipIds,
     playheadPosition: s.playheadPosition,
     setPlayheadPosition: s.setPlayheadPosition,
@@ -286,6 +299,61 @@ export function TranscriptPanel() {
     clearClipTranscript(selectedClipId);
   }, [selectedClipId]);
 
+  // Collect text clips from subtitle tracks for translation
+  const subtitleEntries = useMemo((): TranslationEntry[] => {
+    const subtitleTracks = tracks.filter(t =>
+      t.type === 'video' && t.name.startsWith('Subtitles')
+    );
+    if (!subtitleTracks.length) return [];
+
+    return clips
+      .filter(c =>
+        subtitleTracks.some(t => t.id === c.trackId) &&
+        c.textProperties?.text
+      )
+      .sort((a, b) => a.startTime - b.startTime)
+      .map(c => ({
+        start: c.startTime,
+        end: c.startTime + c.duration,
+        text: c.textProperties!.text,
+      }));
+  }, [tracks, clips]);
+
+  const handleTranslate = useCallback(async () => {
+    if (!subtitleEntries.length || !groqKey) return;
+
+    setIsTranslating(true);
+    setTranslateError(null);
+    setTranslateProgress(0);
+
+    try {
+      const langEntry = TRANSLATION_LANGUAGES.find(l => l.code === translateLang);
+      const langName = langEntry?.name ?? translateLang;
+
+      const { translateSubtitles } = await import('../../services/groqTranslationService');
+      const translated = await translateSubtitles(
+        subtitleEntries,
+        translateLang,
+        langName,
+        groqKey,
+        setTranslateProgress,
+      );
+
+      const { addSubtitlesToTimeline } = await import('../../services/subtitleTrackBuilder');
+      await addSubtitlesToTimeline(
+        translated,
+        0,
+        undefined,
+        `Subtitles [${translateLang.toUpperCase()}]`,
+      );
+    } catch (err) {
+      setTranslateError(err instanceof Error ? err.message : 'Çeviri başarısız');
+    } finally {
+      setIsTranslating(false);
+      setTranslateProgress(0);
+    }
+  }, [subtitleEntries, groqKey, translateLang]);
+
   // Render empty state
   if (!selectedClip) {
     return (
@@ -410,6 +478,40 @@ export function TranscriptPanel() {
           </div>
         )}
       </div>
+
+      {/* Translation */}
+      {subtitleEntries.length > 0 && (
+        <div className="transcript-translate">
+          <div className="transcript-translate-row">
+            <select
+              value={translateLang}
+              onChange={e => setTranslateLang(e.target.value)}
+              disabled={isTranslating}
+              className="translate-lang-select"
+            >
+              {TRANSLATION_LANGUAGES.map(l => (
+                <option key={l.code} value={l.code}>{l.name}</option>
+              ))}
+            </select>
+            <button
+              className="btn-translate"
+              onClick={handleTranslate}
+              disabled={isTranslating || !groqKey}
+              title={!groqKey ? 'Groq API key gerekli — Ayarlar > API Keys' : `${subtitleEntries.length} altyazıyı çevir`}
+            >
+              {isTranslating ? `${translateProgress}%` : 'Çevir'}
+            </button>
+          </div>
+          {translateError && (
+            <div className="translate-error">{translateError}</div>
+          )}
+          {isTranslating && (
+            <div className="transcript-progress">
+              <div className="transcript-progress-bar" style={{ width: `${translateProgress}%` }} />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Progress bar */}
       {transcriptStatus === 'transcribing' && (
