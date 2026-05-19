@@ -16962,6 +16962,26 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
+.translate-modal .translate-lang-select {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+  width: 100%;
+}
+
+.translate-modal-actions button {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
 .translate-progress-toast {
   position: fixed;
   bottom: 24px;

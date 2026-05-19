@@ -1,7 +1,7 @@
 // TimelineContextMenu - Right-click context menu for timeline clips
 // Extracted from Timeline.tsx for better maintainability
 
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useCallback, useState, useRef } from 'react';
 import { handleSubmenuHover, handleSubmenuLeave } from '../panels/media/submenuPosition';
 import type { TimelineClip } from '../../types';
 import type { MediaFile } from '../../stores/mediaStore';
@@ -56,13 +56,15 @@ export function TimelineContextMenu({
 }: TimelineContextMenuProps) {
   const { menuRef: contextMenuRef, adjustedPosition: contextMenuPosition } = useContextMenuPosition(contextMenu);
 
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
   const [showTranslateModal, setShowTranslateModal] = useState(false);
   const [translateLang, setTranslateLang] = useState('en');
   const [isTranslating, setIsTranslating] = useState(false);
   const [translateProgress, setTranslateProgress] = useState(0);
 
   const tracks = useTimelineStore(s => s.tracks);
-  const clips = useTimelineStore(s => s.clips);
   const groqKey = useSettingsStore(s => s.apiKeys.groq ?? '');
 
   const contextClip = contextMenu?.clipId ? clipMap.get(contextMenu.clipId) : null;
@@ -172,7 +174,8 @@ export function TimelineContextMenu({
     setContextMenu(null);
   };
 
-  const handleTranslateTrack = async () => {
+  const handleTranslateTrack = useCallback(async () => {
+    const clips = useTimelineStore.getState().clips;
     if (!contextTrack || !groqKey) return;
     setIsTranslating(true);
     setTranslateProgress(0);
@@ -195,17 +198,22 @@ export function TimelineContextMenu({
       if (!entries.length) return;
 
       const { translateSubtitles } = await import('../../services/groqTranslationService');
-      const translated = await translateSubtitles(entries, translateLang, langName, groqKey, setTranslateProgress);
+      const translated = await translateSubtitles(
+        entries, translateLang, langName, groqKey,
+        (pct) => { if (mountedRef.current) setTranslateProgress(pct); }
+      );
 
       const { addSubtitlesToTimeline } = await import('../../services/subtitleTrackBuilder');
       await addSubtitlesToTimeline(translated, 0, undefined, `Subtitles [${translateLang.toUpperCase()}]`);
     } catch (err) {
       log.error('Translation failed', err);
     } finally {
-      setIsTranslating(false);
-      setTranslateProgress(0);
+      if (mountedRef.current) {
+        setIsTranslating(false);
+        setTranslateProgress(0);
+      }
     }
-  };
+  }, [contextTrack, groqKey, translateLang, mountedRef]);
 
   const mediaFile = contextMenu ? getMediaFileForClip(contextMenu.clipId) : null;
   const clip = contextMenu ? clipMap.get(contextMenu.clipId) : undefined;
