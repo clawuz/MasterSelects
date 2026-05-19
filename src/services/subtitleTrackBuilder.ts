@@ -75,19 +75,20 @@ function buildSubtitleTextProps(preset?: SubtitlePositionPreset) {
   };
 }
 
-export async function addSubtitlesToTimeline(entries: SrtEntry[], timelineOffset: number = 0, preset?: SubtitlePositionPreset): Promise<void> {
+export async function addSubtitlesToTimeline(entries: SrtEntry[], timelineOffset: number = 0, preset?: SubtitlePositionPreset, trackName?: string): Promise<void> {
   if (entries.length === 0) return;
 
   const store = useTimelineStore.getState();
 
-  let trackId = store.tracks.find(t => t.type === 'video' && t.name === SUBTITLE_TRACK_NAME)?.id;
+  const resolvedTrackName = trackName ?? SUBTITLE_TRACK_NAME;
+  let trackId = store.tracks.find(t => t.type === 'video' && t.name === resolvedTrackName)?.id;
   if (!trackId) {
     trackId = store.addTrack('video');
-    store.renameTrack(trackId, SUBTITLE_TRACK_NAME);
+    store.renameTrack(trackId, resolvedTrackName);
   }
 
   const subtitleTextProps = buildSubtitleTextProps(preset);
-  log.info(`Adding ${entries.length} subtitle clips to track "${SUBTITLE_TRACK_NAME}" (paddingBottom=${subtitleTextProps.paddingBottom}px, offset=${timelineOffset}s, preset=${preset?.id ?? 'auto'})`);
+  log.info(`Adding ${entries.length} subtitle clips to track "${resolvedTrackName}" (paddingBottom=${subtitleTextProps.paddingBottom}px, offset=${timelineOffset}s, preset=${preset?.id ?? 'auto'})`);
 
   for (const entry of entries) {
     const duration = Math.max(0.1, entry.end - entry.start);
