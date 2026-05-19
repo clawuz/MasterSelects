@@ -1,10 +1,12 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import { useTimelineStore } from '../../../stores/timeline';
 import { useMediaStore } from '../../../stores/mediaStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
 import type { TranscriptWord } from '../../../types';
 import type { SrtEntry } from '../../../services/nextjsApi';
 import { SUBTITLE_PRESETS } from '../../../services/subtitleTrackBuilder';
 import type { SubtitlePositionPreset } from '../../../services/subtitleTrackBuilder';
+import { TRANSLATION_LANGUAGES } from '../../../services/groqTranslationService';
 
 const LANGUAGES = [
   { code: 'auto', name: 'Auto-Detect' },
@@ -78,6 +80,11 @@ export function TranscriptTab({ clipId, transcript, transcriptStatus, transcript
   const [editingWordId, setEditingWordId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const groqKey = useSettingsStore(s => s.apiKeys.groq ?? '');
+  const [translateLang, setTranslateLang] = useState(() => localStorage.getItem('translateLang') || 'en');
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [translateProgress, setTranslateProgress] = useState(0);
 
   const [subtitlePresetId, setSubtitlePresetId] = useState(() => localStorage.getItem('subtitlePresetId') || 'auto');
   const [customPaddingBottom, setCustomPaddingBottom] = useState(() => parseInt(localStorage.getItem('subtitleCustomPaddingBottom') || '100', 10));
@@ -181,6 +188,28 @@ export function TranscriptTab({ clipId, transcript, transcriptStatus, transcript
     await addSubtitlesToTimeline(groupWordsToSubtitles(transcript), timelineOffset, activePreset);
   }, [transcript, clipStartTime, inPoint, activePreset]);
 
+  const handleTranslate = useCallback(async () => {
+    if (!transcript.length || !groqKey) return;
+    setIsTranslating(true);
+    setTranslateProgress(0);
+    try {
+      const entries = groupWordsToSubtitles(transcript).map(e => ({
+        start: e.start + (clipStartTime - inPoint),
+        end: e.end + (clipStartTime - inPoint),
+        text: e.text,
+      }));
+      const langEntry = TRANSLATION_LANGUAGES.find(l => l.code === translateLang);
+      const langName = langEntry?.name ?? translateLang;
+      const { translateSubtitles } = await import('../../../services/groqTranslationService');
+      const translated = await translateSubtitles(entries, translateLang, langName, groqKey, setTranslateProgress);
+      const { addSubtitlesToTimeline } = await import('../../../services/subtitleTrackBuilder');
+      await addSubtitlesToTimeline(translated, 0, activePreset, `Subtitles [${translateLang.toUpperCase()}]`);
+    } finally {
+      setIsTranslating(false);
+      setTranslateProgress(0);
+    }
+  }, [transcript, groqKey, translateLang, clipStartTime, inPoint, activePreset]);
+
   const handleDownloadSrt = useCallback(() => {
     if (!transcript.length) return;
     const srt = wordsToSrt(transcript);
@@ -280,6 +309,26 @@ export function TranscriptTab({ clipId, transcript, transcriptStatus, transcript
             </div>
           )}
           <div className="transcript-tab-actions" style={{ marginTop: 'var(--sp-1)' }}>
+            <select
+              value={translateLang}
+              onChange={e => { setTranslateLang(e.target.value); localStorage.setItem('translateLang', e.target.value); }}
+              disabled={isTranslating}
+              className="btn btn-sm"
+              style={{ padding: '0 4px', cursor: 'pointer' }}
+              title="Çeviri dili"
+            >
+              {TRANSLATION_LANGUAGES.map(l => (
+                <option key={l.code} value={l.code}>{l.name}</option>
+              ))}
+            </select>
+            <button
+              className="btn btn-sm"
+              onClick={handleTranslate}
+              disabled={isTranslating || !groqKey}
+              title={!groqKey ? 'Groq API key gerekli — Ayarlar > API Keys' : `Transkripti ${TRANSLATION_LANGUAGES.find(l => l.code === translateLang)?.name ?? translateLang} diline çevir`}
+            >
+              {isTranslating ? `${translateProgress}%` : 'Çevir'}
+            </button>
             <button className="btn btn-sm btn-accent" onClick={handleAddSubtitles} title="Transkripti altyazı olarak timeline'a ekle">
               + Altyazı Ekle
             </button>
