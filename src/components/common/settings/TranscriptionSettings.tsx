@@ -5,10 +5,6 @@ interface TranscriptionSettingsProps {
 }
 
 const providers: { id: TranscriptionProvider; label: string; description: string }[] = [
-  { id: 'server', label: 'Whisper large-v3-turbo (Cloud)', description: 'Yüksek doğruluk, API key yok. Cloudflare Workers AI üzerinde çalışır.' },
-  { id: 'openai', label: 'OpenAI Whisper API', description: 'High accuracy, $0.006/minute. Requires API key.' },
-  { id: 'assemblyai', label: 'AssemblyAI', description: 'Excellent accuracy, speaker diarization. $0.015/minute.' },
-  { id: 'deepgram', label: 'Deepgram', description: 'Fast, good accuracy. $0.0125/minute.' },
   { id: 'groq', label: 'Groq (Whisper Large v3)', description: 'Hızlı, yüksek kalite. $0.02/saat. Groq API key gerekli.' },
   { id: 'local', label: 'Browser Whisper (tiny)', description: 'Tarayıcıda çalışır, ~100MB indirir. Düşük doğruluk.' },
 ];
@@ -40,7 +36,7 @@ export function TranscriptionSettings({ localKeys }: TranscriptionSettingsProps)
                 <span className="provider-label">{provider.label}</span>
                 <span className="provider-description">{provider.description}</span>
               </div>
-              {provider.id !== 'local' && provider.id !== 'server' && localKeys[provider.id] && (
+              {provider.id !== 'local' && localKeys[provider.id] && (
                 <span className="provider-status">{'\u2713'}</span>
               )}
             </label>

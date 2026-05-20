@@ -8,7 +8,6 @@ import { GeneralSettings } from './settings/GeneralSettings';
 import { MidiSettings } from './settings/MidiSettings';
 import { TranscriptionSettings } from './settings/TranscriptionSettings';
 import { ApiKeysSettings } from './settings/ApiKeysSettings';
-import { NativeHelperSettings } from './settings/NativeHelperSettings';
 import { ShortcutsSettings } from './settings/ShortcutsSettings';
 import './settings/SettingsDialog.css';
 
@@ -22,7 +21,6 @@ type SettingsCategory =
   | 'shortcuts'
   | 'appearance'
   | 'transcription'
-  | 'nativeHelper'
   | 'apiKeys';
 
 interface CategoryConfig {
@@ -37,7 +35,6 @@ const categories: CategoryConfig[] = [
   { id: 'shortcuts', label: 'Shortcuts', icon: '\u2328' },
   { id: 'appearance', label: 'Appearance', icon: '\uD83C\uDFA8' },
   { id: 'transcription', label: 'Transcription', icon: '\uD83C\uDFA4' },
-  { id: 'nativeHelper', label: 'Native Helper', icon: '\u26A1' },
   { id: 'apiKeys', label: 'API Keys', icon: '\uD83D\uDD11' },
 ];
 
@@ -69,7 +66,6 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       case 'shortcuts': return <ShortcutsSettings />;
       case 'appearance': return <AppearanceSettings />;
       case 'transcription': return <TranscriptionSettings localKeys={localKeys} />;
-      case 'nativeHelper': return <NativeHelperSettings />;
       case 'apiKeys': return <ApiKeysSettings localKeys={localKeys} onKeyChange={handleKeyChange} />;
       default: return null;
     }

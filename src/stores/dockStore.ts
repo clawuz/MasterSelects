@@ -204,8 +204,6 @@ const DEFAULT_LAYOUT: DockLayout = {
             id: 'left-group',
             panels: [
               { id: 'media', type: 'media', title: 'Media' },
-              { id: 'ai-chat', type: 'ai-chat', title: 'AI Chat' },
-              { id: 'ai-video', type: 'ai-video', title: 'AI Video' },
               { id: 'download', type: 'download', title: 'Downloads' },
             ],
             activeIndex: 0, // Media active
@@ -228,13 +226,10 @@ const DEFAULT_LAYOUT: DockLayout = {
                 kind: 'tab-group',
                 id: 'right-group',
                 panels: [
-                  { id: 'export', type: 'export', title: 'Export' },
                   { id: 'clip-properties', type: 'clip-properties', title: 'Properties' },
-                  { id: 'scope-waveform', type: 'scope-waveform', title: 'Waveform' },
-                  { id: 'scope-histogram', type: 'scope-histogram', title: 'Histogram' },
-                  { id: 'scope-vectorscope', type: 'scope-vectorscope', title: 'Vectorscope' },
+                  { id: 'export', type: 'export', title: 'Export' },
                 ],
-                activeIndex: 2, // Waveform active
+                activeIndex: 0, // Properties active
               },
             ],
           },

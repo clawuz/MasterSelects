@@ -232,7 +232,7 @@ export const useSettingsStore = create<SettingsState>()(
         gemini: '',
         groq: '',
       },
-      transcriptionProvider: 'server',
+      transcriptionProvider: 'groq',
       previewQuality: 1, // Full quality by default
       showTransparencyGrid: false, // Don't show checkerboard by default
       saveMode: 'continuous' as SaveMode, // Continuous save by default — every change saved automatically
@@ -513,6 +513,14 @@ export const useSettingsStore = create<SettingsState>()(
             }
           }
 
+          // Seed Groq key from build-time env var if not already stored
+          const envGroqKey = import.meta.env.VITE_GROQ_API_KEY as string | undefined;
+          if (envGroqKey && !keys.groq) {
+            await apiKeyManager.storeKeyByType('groq', envGroqKey);
+            keys.groq = envGroqKey;
+            log.info('Groq API key seeded from environment');
+          }
+
           set({ apiKeys: keys });
           log.info('API keys loaded from encrypted storage');
         } catch (err) {
@@ -522,11 +530,14 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'masterselects-settings',
-      version: 2,
+      version: 3,
       migrate: (persisted: unknown, version: number) => {
         const state = (persisted ?? {}) as Record<string, unknown>;
         if (version < 2 && (state['transcriptionProvider'] === 'local' || state['transcriptionProvider'] === 'cloudflare')) {
           state['transcriptionProvider'] = 'server';
+        }
+        if (version < 3 && (state['transcriptionProvider'] === 'server' || state['transcriptionProvider'] === 'openai' || state['transcriptionProvider'] === 'assemblyai' || state['transcriptionProvider'] === 'deepgram')) {
+          state['transcriptionProvider'] = 'groq';
         }
         return state;
       },
