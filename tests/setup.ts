@@ -1,6 +1,21 @@
 import '@testing-library/jest-dom'
 import { afterEach, vi } from 'vitest'
 
+// Polyfill ImageData for jsdom (not exposed by default)
+if (typeof globalThis.ImageData === 'undefined') {
+  class ImageDataPolyfill {
+    readonly data: Uint8ClampedArray
+    readonly width: number
+    readonly height: number
+    constructor(data: Uint8ClampedArray, width: number, height?: number) {
+      this.data = data
+      this.width = width
+      this.height = height ?? data.length / 4 / width
+    }
+  }
+  ;(globalThis as Record<string, unknown>).ImageData = ImageDataPolyfill
+}
+
 const jsdomStorage = (globalThis as typeof globalThis & { jsdom?: { window: Window } }).jsdom?.window.localStorage
 
 Object.defineProperty(globalThis, 'localStorage', {

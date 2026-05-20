@@ -29,6 +29,7 @@
     "@ffmpeg/util": "^0.12.2",
     "@huggingface/transformers": "^3.8.1",
     "@lottiefiles/dotlottie-web": "^0.71.0",
+    "@mediapipe/tasks-vision": "^0.10.35",
     "@playcanvas/splat-transform": "^1.10.1",
     "@webgpu/types": "^0.1.66",
     "fflate": "^0.8.2",
