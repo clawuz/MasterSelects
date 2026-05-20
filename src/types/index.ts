@@ -596,6 +596,21 @@ export interface FrameAnalysisData {
   brightness: number;     // 0-1 brightness/luminance score
   faceCount: number;      // Number of faces detected
   isSceneCut?: boolean;   // True if this frame is likely a scene cut
+  attentionX?: number;        // 0–1 normalised horizontal subject position
+  attentionSource?: 'face' | 'motion' | 'default';
+}
+
+export interface ReframeAnalysisFrame {
+  timestamp: number;
+  attentionX: number;
+  attentionSource: 'face' | 'motion' | 'default';
+  isSceneCut: boolean;
+}
+
+export interface ReframeAnalysis {
+  clipId: string;
+  sampleIntervalMs: number;
+  frames: ReframeAnalysisFrame[];
 }
 
 export interface ClipAnalysis {
