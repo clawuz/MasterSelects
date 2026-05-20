@@ -7,9 +7,9 @@ function makeFrame(width: number, height: number, fillValue = 0): ImageData {
 }
 
 describe('computeMotionCenterX', () => {
-  it('returns 0.5 when no motion between frames', () => {
+  it('returns null when no motion between frames (static scene)', () => {
     const frame = makeFrame(160, 90, 128);
-    expect(computeMotionCenterX(frame, frame)).toBe(0.5);
+    expect(computeMotionCenterX(frame, frame)).toBeNull();
   });
 
   it('returns < 0.5 when motion is only in the left quarter', () => {

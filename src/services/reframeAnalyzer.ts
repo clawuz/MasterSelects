@@ -55,6 +55,7 @@ async function getFaceDetector(): Promise<import('@mediapipe/tasks-vision').Face
 // HMR safety
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
+    faceDetector?.close?.();
     faceDetector = null;
     faceDetectorLoading = false;
     faceDetectorFailed = false;
@@ -63,7 +64,7 @@ if (import.meta.hot) {
 
 // ─── Motion center helper (exported for tests) ───────────────────────────────
 
-export function computeMotionCenterX(curr: ImageData, prev: ImageData): number {
+export function computeMotionCenterX(curr: ImageData, prev: ImageData): number | null {
   const { width, height } = curr;
   const colWidth = Math.floor(width / MOTION_GRID_COLS);
   const colMotion = new Array(MOTION_GRID_COLS).fill(0) as number[];
@@ -81,7 +82,7 @@ export function computeMotionCenterX(curr: ImageData, prev: ImageData): number {
   }
 
   const total = colMotion.reduce((a, b) => a + b, 0);
-  if (total < MOTION_THRESHOLD) return 0.5;
+  if (total < MOTION_THRESHOLD) return null;
 
   const weightedSum = colMotion.reduce((sum, m, i) => sum + m * ((i + 0.5) / MOTION_GRID_COLS), 0);
   return weightedSum / total;
@@ -173,18 +174,21 @@ export async function analyzeClipForReframe(
         } catch { /* face detection failure is non-fatal */ }
       }
 
-      // 2. Motion fallback
-      if (attentionSource !== 'face' && prevFrame) {
-        const motionX = computeMotionCenterX(frame, prevFrame);
-        if (motionX !== 0.5) {
-          attentionX = motionX;
-          attentionSource = 'motion';
-        }
-        // Detect scene cut: very high total pixel diff
+      // 2. Scene cut detection (independent of face detection)
+      if (prevFrame) {
         const totalDiff = Array.from(frame.data).reduce((sum, v, idx) => {
           return idx % 4 === 3 ? sum : sum + Math.abs(v - prevFrame!.data[idx]);
         }, 0);
         isSceneCut = totalDiff / (canvas.width * canvas.height) > 50;
+      }
+
+      // 3. Motion fallback (only when no face detected)
+      if (attentionSource !== 'face' && prevFrame) {
+        const motionX = computeMotionCenterX(frame, prevFrame);
+        if (motionX !== null) {
+          attentionX = motionX;
+          attentionSource = 'motion';
+        }
       }
 
       frames.push({ timestamp, attentionX, attentionSource, isSceneCut });
