@@ -133,8 +133,9 @@ type CorrectionSide = 'left' | 'center' | 'right';
 
 export function AutoReframePanel() {
   // ── Store subscriptions ────────────────────────────────────────────────────
-  const { selectedClipIds, clips, playheadPosition } = useTimelineStore(
+  const { primarySelectedClipId, selectedClipIds, clips, playheadPosition } = useTimelineStore(
     useShallow(s => ({
+      primarySelectedClipId: s.primarySelectedClipId,
       selectedClipIds: s.selectedClipIds,
       clips: s.clips,
       playheadPosition: s.playheadPosition,
@@ -161,10 +162,11 @@ export function AutoReframePanel() {
   const [correctionOverride, setCorrectionOverride] = useState<CorrectionSide | null>(null);
 
   // ── Derived values ─────────────────────────────────────────────────────────
+  // Use primarySelectedClipId so linked audio clips don't block resolution
   const selectedClipId = useMemo(() => {
-    const ids = Array.from(selectedClipIds);
-    return ids.length === 1 ? ids[0] : null;
-  }, [selectedClipIds]);
+    if (primarySelectedClipId && selectedClipIds.has(primarySelectedClipId)) return primarySelectedClipId;
+    return selectedClipIds.size > 0 ? [...selectedClipIds][0] : null;
+  }, [primarySelectedClipId, selectedClipIds]);
 
   const selectedClip = useMemo(
     () => (selectedClipId ? clips.find(c => c.id === selectedClipId) ?? null : null),
