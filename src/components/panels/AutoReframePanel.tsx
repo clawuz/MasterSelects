@@ -24,9 +24,9 @@ const RATIO_LABELS: { value: TargetAspectRatio; label: string }[] = [
 ];
 
 const SMOOTHING_LABELS: { value: SmoothingLevel; label: string }[] = [
-  { value: 'low',    label: 'Düşük'  },
-  { value: 'medium', label: 'Orta'   },
-  { value: 'high',   label: 'Yüksek' },
+  { value: 'low',    label: 'Az'   },
+  { value: 'medium', label: 'Orta' },
+  { value: 'high',   label: 'Çok'  },
 ];
 
 // ─── Mini SVG crop-path preview ───────────────────────────────────────────────
@@ -237,6 +237,19 @@ export function AutoReframePanel() {
       Math.min(playheadPosition - selectedClip.startTime + selectedClip.inPoint, selectedClip.outPoint)
     );
 
+    // Deduplicate: remove any existing keyframe on position.x within 0.05s of the playhead
+    const DEDUP_THRESHOLD = 0.05;
+    const ts = useTimelineStore.getState();
+    const clipKfs = ts.clipKeyframes.get(selectedClipId) ?? [];
+    const duplicates = clipKfs.filter(
+      kf =>
+        kf.property === 'position.x' &&
+        Math.abs(kf.time - clipLocalTime) < DEDUP_THRESHOLD
+    );
+    for (const dup of duplicates) {
+      ts.removeKeyframe(dup.id);
+    }
+
     useTimelineStore.getState().addKeyframe(
       selectedClipId,
       'position.x',
@@ -409,6 +422,13 @@ export function AutoReframePanel() {
         {selectedClip && !isVideoFile && (
           <div className="arp-hint">Yalnızca video klipleri desteklenir</div>
         )}
+        {selectedClip && isVideoFile && !analyzing && !hasResult && (() => {
+          const frameCount = Math.ceil((clipDuration * 1000) / 500);
+          const estimatedSec = Math.round(frameCount * 0.033);
+          return (
+            <div className="arp-hint">~{estimatedSec}s · {frameCount} frame</div>
+          );
+        })()}
       </div>
 
       {/* ── Progress bar ── */}
