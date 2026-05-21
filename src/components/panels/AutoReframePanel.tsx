@@ -139,10 +139,9 @@ export function AutoReframePanel() {
     }))
   );
 
-  const { files, compositions } = useMediaStore(
+  const { files } = useMediaStore(
     useShallow(s => ({
       files: s.files,
-      compositions: s.compositions,
     }))
   );
 
@@ -157,6 +156,10 @@ export function AutoReframePanel() {
   const [createdCompId, setCreatedCompId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [correctionOverride, setCorrectionOverride] = useState<CorrectionSide | null>(null);
+  const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [modalSmoothing, setModalSmoothing] = useState<SmoothingLevel>('medium');
+  const [modalIntensity, setModalIntensity] = useState(1.0);
+  const [reapplying, setReapplying] = useState(false);
 
   // ── Derived values ─────────────────────────────────────────────────────────
   // Use primarySelectedClipId so linked audio clips don't block resolution
@@ -363,6 +366,66 @@ export function AutoReframePanel() {
     useMediaStore.getState().openCompositionTab(createdCompId);
   }, [createdCompId]);
 
+  // ── Open adjustment modal ──────────────────────────────────────────────────
+  const handleOpenAdjustModal = useCallback(() => {
+    setModalSmoothing(smoothing);
+    setModalIntensity(1.0);
+    setShowAdjustModal(true);
+  }, [smoothing]);
+
+  // ── Re-apply keyframes with new smoothing + intensity ─────────────────────
+  const handleReapply = useCallback(async () => {
+    if (!createdCompId || !analysis || !mediaFile) return;
+    setReapplying(true);
+
+    try {
+      const newPath = buildCropPath(analysis, srcW, srcH, targetRatio, modalSmoothing, modalIntensity);
+      const mediaState = useMediaStore.getState();
+      const previousCompId = mediaState.activeCompositionId;
+
+      mediaState.setActiveComposition(createdCompId);
+      await new Promise<void>(r => setTimeout(r, 150));
+
+      const ts = useTimelineStore.getState();
+      const videoTrack = ts.tracks.find(t => t.type === 'video');
+      const clip = videoTrack
+        ? ts.clips.filter(c => c.trackId === videoTrack.id)[0]
+        : null;
+
+      if (clip) {
+        const existing = (ts.clipKeyframes.get(clip.id) ?? []).filter(
+          kf => kf.property === 'position.x'
+        );
+        for (const kf of existing) {
+          useTimelineStore.getState().removeKeyframe(kf.id);
+        }
+        for (const kf of newPath.keyframes) {
+          useTimelineStore.getState().addKeyframe(
+            clip.id, 'position.x', kf.positionX, kf.time, kf.easing
+          );
+        }
+      }
+
+      const timelineData = useTimelineStore.getState().getSerializableState();
+      useMediaStore.setState(s => ({
+        compositions: s.compositions.map(c =>
+          c.id === createdCompId ? { ...c, timelineData } : c
+        ),
+      }));
+
+      if (previousCompId && previousCompId !== createdCompId) {
+        mediaState.setActiveComposition(previousCompId);
+        await new Promise<void>(r => setTimeout(r, 60));
+      }
+
+      setShowAdjustModal(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReapplying(false);
+    }
+  }, [createdCompId, analysis, srcW, srcH, targetRatio, modalSmoothing, modalIntensity, mediaFile]);
+
   // ── Render ─────────────────────────────────────────────────────────────────
   const canAnalyze = isVideoFile && !analyzing;
   const hasResult = effectiveCropPath !== null && analysis !== null;
@@ -523,12 +586,71 @@ export function AutoReframePanel() {
 
           {/* Open created composition */}
           {createdCompId && (
-            <button className="arp-open-comp-btn" onClick={handleOpenComp}>
-              Kompozisyonda Aç —{' '}
-              {compositions.find(c => c.id === createdCompId)?.name ?? createdCompId}
-            </button>
+            <div className="arp-post-create-row">
+              <button className="arp-open-comp-btn" onClick={handleOpenComp}>
+                Kompozisyonda Aç
+              </button>
+              <button className="arp-adjust-btn" onClick={handleOpenAdjustModal}>
+                Ayarları Düzenle
+              </button>
+            </div>
           )}
         </>
+      )}
+
+      {/* ── Adjustment modal ── */}
+      {showAdjustModal && (
+        <div className="arp-modal-overlay" onClick={() => setShowAdjustModal(false)}>
+          <div className="arp-modal" onClick={e => e.stopPropagation()}>
+            <div className="arp-modal-title">Kadraj Ayarları</div>
+
+            <div className="arp-section-label">Yumuşatma</div>
+            <div className="arp-pills">
+              {SMOOTHING_LABELS.map(s => (
+                <button
+                  key={s.value}
+                  className={`arp-pill${modalSmoothing === s.value ? ' active' : ''}`}
+                  onClick={() => setModalSmoothing(s.value)}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="arp-section-label" style={{ marginTop: 12 }}>
+              Hareket Sınırı — %{Math.round(modalIntensity * 100)}
+            </div>
+            <input
+              type="range"
+              className="arp-intensity-slider"
+              min={0}
+              max={100}
+              value={Math.round(modalIntensity * 100)}
+              onChange={e => setModalIntensity(Number(e.target.value) / 100)}
+            />
+            <div className="arp-intensity-labels">
+              <span>Sabit</span>
+              <span>Tam Hareket</span>
+            </div>
+
+            <div className="arp-modal-actions">
+              <button
+                className="arp-apply-btn"
+                disabled={reapplying}
+                onClick={handleReapply}
+              >
+                {reapplying ? 'Uygulanıyor…' : 'Uygula'}
+              </button>
+              <button
+                className="arp-cancel-btn"
+                disabled={reapplying}
+                onClick={() => setShowAdjustModal(false)}
+              >
+                İptal
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

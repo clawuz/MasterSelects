@@ -228,3 +228,90 @@
   border-radius: 4px;
   padding: 8px;
 }
+
+/* ── Post-create row ── */
+.arp-post-create-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.arp-post-create-row .arp-open-comp-btn {
+  flex: 1;
+}
+.arp-adjust-btn {
+  padding: 7px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #444);
+  background: transparent;
+  color: var(--text, #ccc);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.arp-adjust-btn:hover {
+  background: var(--surface-hover, #2a2a2a);
+}
+
+/* ── Adjustment modal ── */
+.arp-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.arp-modal {
+  background: var(--surface, #1e1e1e);
+  border: 1px solid var(--border, #444);
+  border-radius: 10px;
+  padding: 20px;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.arp-modal-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text, #eee);
+  margin-bottom: 4px;
+}
+.arp-intensity-slider {
+  width: 100%;
+  accent-color: #e94560;
+  cursor: pointer;
+}
+.arp-intensity-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted, #888);
+  margin-top: -4px;
+}
+.arp-modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.arp-modal-actions .arp-apply-btn {
+  flex: 1;
+  margin-top: 0;
+}
+.arp-cancel-btn {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #444);
+  background: transparent;
+  color: var(--text, #ccc);
+  cursor: pointer;
+  font-size: 13px;
+}
+.arp-cancel-btn:hover:not(:disabled) {
+  background: var(--surface-hover, #2a2a2a);
+}
+.arp-cancel-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
