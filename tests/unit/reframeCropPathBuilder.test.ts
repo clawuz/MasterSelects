@@ -2,8 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   buildCropPath,
   getTargetDimensions,
-  type TargetAspectRatio,
-  type SmoothingLevel,
 } from '../../src/services/reframeCropPathBuilder';
 import type { ReframeAnalysis } from '../../src/types/index';
 

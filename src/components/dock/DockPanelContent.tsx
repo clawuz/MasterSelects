@@ -25,6 +25,7 @@ const WaveformPanel = lazy(() => import('../panels/scopes/WaveformPanel').then(m
 const HistogramPanel = lazy(() => import('../panels/scopes/HistogramPanel').then(m => ({ default: m.HistogramPanel })));
 const VectorscopePanel = lazy(() => import('../panels/scopes/VectorscopePanel').then(m => ({ default: m.VectorscopePanel })));
 const MultiPreviewPanel = lazy(() => import('../preview/MultiPreviewPanel').then(m => ({ default: m.MultiPreviewPanel })));
+const AutoReframePanel = lazy(() => import('../panels/AutoReframePanel').then(m => ({ default: m.AutoReframePanel })));
 
 const DEFAULT_MULTI_PREVIEW_DATA: MultiPreviewPanelData = {
   sourceCompositionId: null,
@@ -89,6 +90,8 @@ export function DockPanelContent({ panel }: DockPanelContentProps) {
       return <Suspense fallback={<PanelLoading />}><HistogramPanel /></Suspense>;
     case 'scope-vectorscope':
       return <Suspense fallback={<PanelLoading />}><VectorscopePanel /></Suspense>;
+    case 'auto-reframe':
+      return <Suspense fallback={<PanelLoading />}><AutoReframePanel /></Suspense>;
     default:
       return <div className="panel-placeholder">Unknown panel: {panel.type}</div>;
   }
