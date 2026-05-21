@@ -345,11 +345,12 @@ export function AutoReframePanel() {
         await new Promise<void>(resolve => setTimeout(resolve, 60));
       }
 
-      // 9. Add comp clip to main timeline at the selected clip's position
+      // 9. Add comp clip to main timeline — use the updated comp (with timelineData)
+      const updatedComp = useMediaStore.getState().compositions.find(c => c.id === comp.id) ?? comp;
       const mainTs = useTimelineStore.getState();
       const mainVideoTrack = mainTs.tracks.find(t => t.type === 'video');
       if (mainVideoTrack) {
-        mainTs.addCompClip(mainVideoTrack.id, comp, selectedClip.startTime);
+        mainTs.addCompClip(mainVideoTrack.id, updatedComp, selectedClip.startTime);
       }
 
       setCreatedCompId(comp.id);
