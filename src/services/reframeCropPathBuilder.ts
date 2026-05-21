@@ -38,7 +38,8 @@ export function buildCropPath(
   sourceWidth: number,
   sourceHeight: number,
   targetRatio: TargetAspectRatio,
-  smoothing: SmoothingLevel
+  smoothing: SmoothingLevel,
+  intensity = 1.0
 ): CropPath {
   const { width: compW, height: compH } = getTargetDimensions(targetRatio);
 
@@ -79,8 +80,9 @@ export function buildCropPath(
       let sum = 0;
       for (let j = start; j <= end; j++) sum += segment[j].attentionX;
       const smoothed = sum / (end - start + 1);
-      // UV offset: 0 = centered, positive = pan left, negative = pan right
-      const positionX = Math.max(-maxPan, Math.min(maxPan, 0.5 - smoothed));
+      // UV offset clamped to bounds, then scaled by intensity (0=no movement, 1=full range)
+      const rawPosX = Math.max(-maxPan, Math.min(maxPan, 0.5 - smoothed));
+      const positionX = rawPosX * intensity;
       smoothedPositions.push({ time: segment[i].timestamp, positionX });
     }
   }

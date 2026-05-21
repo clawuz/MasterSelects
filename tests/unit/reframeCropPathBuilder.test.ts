@@ -76,4 +76,25 @@ describe('buildCropPath', () => {
     const path = buildCropPath(makeAnalysis([0, 0.5, 1, 0.5, 0]), 1920, 1080, '9:16', 'medium');
     path.keyframes.forEach(kf => expect(kf.easing).toBe('ease-in-out'));
   });
+
+  it('intensity=1.0 leaves positionX unchanged', () => {
+    const path1 = buildCropPath(makeAnalysis([0.2, 0.8]), 1920, 1080, '9:16', 'low');
+    const path2 = buildCropPath(makeAnalysis([0.2, 0.8]), 1920, 1080, '9:16', 'low', 1.0);
+    path1.keyframes.forEach((kf, i) => {
+      expect(path2.keyframes[i].positionX).toBeCloseTo(kf.positionX, 5);
+    });
+  });
+
+  it('intensity=0.5 halves all positionX values', () => {
+    const path1 = buildCropPath(makeAnalysis([0.2, 0.8]), 1920, 1080, '9:16', 'low');
+    const path2 = buildCropPath(makeAnalysis([0.2, 0.8]), 1920, 1080, '9:16', 'low', 0.5);
+    path1.keyframes.forEach((kf, i) => {
+      expect(path2.keyframes[i].positionX).toBeCloseTo(kf.positionX * 0.5, 5);
+    });
+  });
+
+  it('intensity=0 locks positionX to 0 for all keyframes', () => {
+    const path = buildCropPath(makeAnalysis([0, 0.5, 1]), 1920, 1080, '9:16', 'low', 0);
+    path.keyframes.forEach(kf => expect(kf.positionX).toBeCloseTo(0, 5));
+  });
 });
