@@ -160,6 +160,8 @@ export function AutoReframePanel() {
   const [modalSmoothing, setModalSmoothing] = useState<SmoothingLevel>('medium');
   const [modalIntensity, setModalIntensity] = useState(1.0);
   const [reapplying, setReapplying] = useState(false);
+  // Source dims captured at analysis time so re-apply works even when clip is deselected
+  const [analysisSrcDims, setAnalysisSrcDims] = useState<{ w: number; h: number } | null>(null);
 
   // ── Derived values ─────────────────────────────────────────────────────────
   // Use primarySelectedClipId so linked audio clips don't block resolution
@@ -204,10 +206,12 @@ export function AutoReframePanel() {
     setCropPath(null);
     setCreatedCompId(null);
     setCorrectionOverride(null);
+    setAnalysisSrcDims(null);
 
     try {
       const result = await analyzeClipForReframe(mediaFile.id, pct => setProgress(pct));
       setAnalysis(result);
+      setAnalysisSrcDims({ w: srcW, h: srcH });
       const path = buildCropPath(result, srcW, srcH, targetRatio, smoothing);
       setCropPath(path);
     } catch (err) {
@@ -375,11 +379,14 @@ export function AutoReframePanel() {
 
   // ── Re-apply keyframes with new smoothing + intensity ─────────────────────
   const handleReapply = useCallback(async () => {
-    if (!createdCompId || !analysis || !mediaFile) return;
+    if (!createdCompId || !analysis || !analysisSrcDims) return;
     setReapplying(true);
 
     try {
-      const newPath = buildCropPath(analysis, srcW, srcH, targetRatio, modalSmoothing, modalIntensity);
+      const newPath = buildCropPath(
+        analysis, analysisSrcDims.w, analysisSrcDims.h,
+        targetRatio, modalSmoothing, modalIntensity
+      );
       const mediaState = useMediaStore.getState();
       const previousCompId = mediaState.activeCompositionId;
 
@@ -433,7 +440,7 @@ export function AutoReframePanel() {
     } finally {
       setReapplying(false);
     }
-  }, [createdCompId, analysis, srcW, srcH, targetRatio, modalSmoothing, modalIntensity, mediaFile]);
+  }, [createdCompId, analysis, analysisSrcDims, targetRatio, modalSmoothing, modalIntensity]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const canAnalyze = isVideoFile && !analyzing;
