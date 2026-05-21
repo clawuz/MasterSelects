@@ -384,40 +384,49 @@ export function AutoReframePanel() {
       const previousCompId = mediaState.activeCompositionId;
 
       mediaState.setActiveComposition(createdCompId);
-      await new Promise<void>(r => setTimeout(r, 150));
+      try {
+        await new Promise<void>(r => setTimeout(r, 150));
 
-      const ts = useTimelineStore.getState();
-      const videoTrack = ts.tracks.find(t => t.type === 'video');
-      const clip = videoTrack
-        ? ts.clips.filter(c => c.trackId === videoTrack.id)[0]
-        : null;
+        const ts = useTimelineStore.getState();
+        const videoTrack = ts.tracks.find(t => t.type === 'video');
+        // Sort descending by startTime to match the clip added in handleApply
+        const clip = videoTrack
+          ? ts.clips
+              .filter(c => c.trackId === videoTrack.id)
+              .sort((a, b) => b.startTime - a.startTime)[0]
+          : null;
 
-      if (clip) {
-        const existing = (ts.clipKeyframes.get(clip.id) ?? []).filter(
-          kf => kf.property === 'position.x'
-        );
-        for (const kf of existing) {
-          useTimelineStore.getState().removeKeyframe(kf.id);
-        }
-        for (const kf of newPath.keyframes) {
-          useTimelineStore.getState().addKeyframe(
-            clip.id, 'position.x', kf.positionX, kf.time, kf.easing
+        if (clip) {
+          const existing = (ts.clipKeyframes.get(clip.id) ?? []).filter(
+            kf => kf.property === 'position.x'
           );
+          for (const kf of existing) {
+            useTimelineStore.getState().removeKeyframe(kf.id);
+          }
+          for (const kf of newPath.keyframes) {
+            useTimelineStore.getState().addKeyframe(
+              clip.id, 'position.x', kf.positionX, kf.time, kf.easing
+            );
+          }
+        }
+
+        const timelineData = useTimelineStore.getState().getSerializableState();
+        useMediaStore.setState(s => ({
+          compositions: s.compositions.map(c =>
+            c.id === createdCompId ? { ...c, timelineData } : c
+          ),
+        }));
+      } finally {
+        // Always restore the previous composition even if an error occurs
+        if (previousCompId && previousCompId !== createdCompId) {
+          mediaState.setActiveComposition(previousCompId);
+          await new Promise<void>(r => setTimeout(r, 60));
         }
       }
 
-      const timelineData = useTimelineStore.getState().getSerializableState();
-      useMediaStore.setState(s => ({
-        compositions: s.compositions.map(c =>
-          c.id === createdCompId ? { ...c, timelineData } : c
-        ),
-      }));
-
-      if (previousCompId && previousCompId !== createdCompId) {
-        mediaState.setActiveComposition(previousCompId);
-        await new Promise<void>(r => setTimeout(r, 60));
-      }
-
+      // Sync panel preview with what was just applied
+      setCropPath(newPath);
+      setSmoothing(modalSmoothing);
       setShowAdjustModal(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
