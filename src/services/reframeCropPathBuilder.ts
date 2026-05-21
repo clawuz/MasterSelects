@@ -26,7 +26,8 @@ const SMOOTHING_WINDOW_SEC: Record<SmoothingLevel, number> = {
   high: 3.0,
 };
 
-const KEYFRAME_THRESHOLD_PX = 4;
+// Minimum UV change to emit a new keyframe (≈4px out of 1920)
+const KEYFRAME_THRESHOLD_UV = 0.002;
 
 export function getTargetDimensions(ratio: TargetAspectRatio): { width: number; height: number } {
   return DIMENSIONS[ratio];
@@ -40,9 +41,18 @@ export function buildCropPath(
   smoothing: SmoothingLevel
 ): CropPath {
   const { width: compW, height: compH } = getTargetDimensions(targetRatio);
-  const scale = compH / sourceHeight;
-  const scaledW = sourceWidth * scale;
-  const maxOffset = (scaledW - compW) / 2;
+
+  // The compositor shader applies aspect-ratio correction independently, so the
+  // scale that achieves "fill height" is sourceAspect / outputAspect, not compH/srcH.
+  // positionX is a UV-space offset: posX = 0.5 − smoothedAttentionX
+  // (positive posX pans the visible crop window left; negative pans right).
+  const sourceAspect = sourceWidth / sourceHeight;
+  const outputAspect = compW / compH;
+  const scale = sourceAspect / outputAspect;
+
+  // Maximum UV pan before the crop window would go out of source bounds
+  const halfVisible = 0.5 / scale;
+  const maxPan = Math.max(0, 0.5 - halfVisible);
 
   // Split frames into segments at scene cuts, smooth each segment independently
   const segments: ReframeAnalysis['frames'][] = [];
@@ -69,12 +79,13 @@ export function buildCropPath(
       let sum = 0;
       for (let j = start; j <= end; j++) sum += segment[j].attentionX;
       const smoothed = sum / (end - start + 1);
-      const positionX = (smoothed - 0.5) * 2 * maxOffset;
+      // UV offset: 0 = centered, positive = pan left, negative = pan right
+      const positionX = Math.max(-maxPan, Math.min(maxPan, 0.5 - smoothed));
       smoothedPositions.push({ time: segment[i].timestamp, positionX });
     }
   }
 
-  // Reduce keyframes: only emit when positionX changes > threshold
+  // Reduce keyframes: only emit when positionX changes > UV threshold
   const keyframes: CropKeyframe[] = [];
   let lastEmittedX: number | null = null;
 
@@ -82,7 +93,7 @@ export function buildCropPath(
     const { time, positionX } = smoothedPositions[i];
     const isFirst = i === 0;
     const isLast = i === smoothedPositions.length - 1;
-    const changed = lastEmittedX === null || Math.abs(positionX - lastEmittedX) > KEYFRAME_THRESHOLD_PX;
+    const changed = lastEmittedX === null || Math.abs(positionX - lastEmittedX) > KEYFRAME_THRESHOLD_UV;
 
     if (isFirst || isLast || changed) {
       keyframes.push({ time, positionX, easing: 'ease-in-out' });

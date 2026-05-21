@@ -102,19 +102,16 @@ function interpolateCropX(cropPath: CropPath, time: number): number {
 }
 
 function CropOverlay({ cropPath, currentTime, sourceWidth, sourceHeight, targetRatio }: CropOverlayProps) {
-  const { w: targetW, h: targetH } = TARGET_DIMS[targetRatio];
-  const scale = targetH / sourceHeight;
-  const scaledSrcW = sourceWidth * scale;
-  const cropW = targetW; // in scaled space
+  const { w: compW, h: compH } = TARGET_DIMS[targetRatio];
+  const scale = (sourceWidth / sourceHeight) / (compW / compH); // sourceAspect / outputAspect
+  const visibleFraction = 1 / scale; // fraction of source width visible
 
-  // positionX is offset from center in scaled pixels
+  // positionX is a UV offset: attentionX = 0.5 − posX
   const posX = interpolateCropX(cropPath, currentTime);
-  // Center offset → left edge in scaled space
-  const leftScaled = scaledSrcW / 2 + posX - cropW / 2;
+  const attentionX = 0.5 - posX;
 
-  // Map to percentage of source width
-  const leftPct = (leftScaled / scaledSrcW) * 100;
-  const widthPct = (cropW / scaledSrcW) * 100;
+  const leftPct = (attentionX - visibleFraction / 2) * 100;
+  const widthPct = visibleFraction * 100;
 
   return (
     <div
@@ -222,15 +219,14 @@ export function AutoReframePanel() {
     if (!effectiveCropPath || !selectedClipId || !selectedClip) return;
     setCorrectionOverride(side);
 
-    // Compute override positionX based on side
-    const { w: targetW, h: targetH } = TARGET_DIMS[targetRatio];
-    const scale = targetH / srcH;
-    const scaledSrcW = srcW * scale;
-    const maxOffset = (scaledSrcW - targetW) / 2;
+    // Compute override positionX in UV space
+    const { w: compW, h: compH } = TARGET_DIMS[targetRatio];
+    const scale = (srcW / srcH) / (compW / compH);
+    const maxPan = Math.max(0, 0.5 - 1 / (2 * scale));
 
     let overrideX: number;
-    if (side === 'left')  overrideX = -maxOffset;
-    else if (side === 'right') overrideX = maxOffset;
+    if (side === 'left')  overrideX = maxPan;   // pan left (positive UV offset)
+    else if (side === 'right') overrideX = -maxPan; // pan right (negative UV offset)
     else overrideX = 0;
 
     // Time relative to clip
