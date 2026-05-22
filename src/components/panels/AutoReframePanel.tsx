@@ -153,7 +153,7 @@ export function AutoReframePanel() {
   const [analysis, setAnalysis] = useState<ReframeAnalysis | null>(null);
   const [cropPath, setCropPath] = useState<CropPath | null>(null);
   const [applying, setApplying] = useState(false);
-  const [appliedClipId, setAppliedClipId] = useState<string | null>(null);
+  const [createdCompId, setCreatedCompId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [correctionOverride, setCorrectionOverride] = useState<CorrectionSide | null>(null);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
@@ -204,7 +204,7 @@ export function AutoReframePanel() {
     setProgress(0);
     setAnalysis(null);
     setCropPath(null);
-    setAppliedClipId(null);
+    setCreatedCompId(null);
     setCorrectionOverride(null);
     setAnalysisSrcDims(null);
 
@@ -264,40 +264,98 @@ export function AutoReframePanel() {
     );
   }, [effectiveCropPath, selectedClipId, selectedClip, targetRatio, srcW, srcH, playheadPosition]);
 
-  // ── Apply: write scale + position keyframes directly onto the selected clip ──
-  const handleApply = useCallback(() => {
-    if (!effectiveCropPath || !selectedClipId) return;
+  // ── Apply: create a dedicated target-ratio composition with reframe keyframes ──
+  const handleApply = useCallback(async () => {
+    if (!effectiveCropPath || !selectedClip || !mediaFile) return;
     setError(null);
     setApplying(true);
 
     try {
-      const ts = useTimelineStore.getState();
+      const mediaState = useMediaStore.getState();
+      const previousCompId = mediaState.activeCompositionId;
 
-      // Remove any existing position.x keyframes from a previous apply
-      const existing = (ts.clipKeyframes.get(selectedClipId) ?? []).filter(
-        kf => kf.property === 'position.x'
-      );
-      for (const kf of existing) ts.removeKeyframe(kf.id);
-
-      // Set scale so the source fills the output height for the target ratio
-      ts.updateClipTransform(selectedClipId, {
-        scale: { x: effectiveCropPath.scale, y: effectiveCropPath.scale },
+      // 1. Create new composition sized to target ratio
+      const { w: compW, h: compH } = TARGET_DIMS[targetRatio];
+      const compName = `${mediaFile.name.replace(/\.[^.]+$/, '')} – Reframe ${targetRatio}`;
+      const comp = mediaState.createComposition(compName, {
+        width: compW,
+        height: compH,
+        duration: clipDuration || mediaFile.duration || 60,
       });
 
-      // Write position.x keyframes
-      for (const kf of effectiveCropPath.keyframes) {
-        useTimelineStore.getState().addKeyframe(
-          selectedClipId, 'position.x', kf.positionX, kf.time, kf.easing
+      // 2. Open and activate the new composition
+      useMediaStore.setState(s => ({
+        openCompositionIds: s.openCompositionIds.includes(comp.id)
+          ? s.openCompositionIds
+          : [...s.openCompositionIds, comp.id],
+      }));
+      mediaState.setActiveComposition(comp.id);
+
+      await new Promise<void>(resolve => setTimeout(resolve, 200));
+
+      // 3. Add source clip to composition timeline
+      const ts = useTimelineStore.getState();
+      const videoTrack = ts.tracks.find(t => t.type === 'video');
+      if (!videoTrack) throw new Error('No video track found in new composition');
+
+      if (mediaFile.file) {
+        await ts.addClip(
+          videoTrack.id,
+          mediaFile.file,
+          0,
+          mediaFile.duration ?? clipDuration,
+          mediaFile.id
         );
       }
 
-      setAppliedClipId(selectedClipId);
+      // 4. Find the added clip
+      const addedClip = useTimelineStore
+        .getState()
+        .clips
+        .filter(c => c.trackId === videoTrack.id)
+        .sort((a, b) => b.startTime - a.startTime)[0];
+
+      if (addedClip) {
+        // 5. Set scale so source fills the composition height
+        useTimelineStore.getState().updateClipTransform(addedClip.id, {
+          scale: { x: effectiveCropPath.scale, y: effectiveCropPath.scale },
+        });
+
+        // 6. Write position.x keyframes
+        for (const kf of effectiveCropPath.keyframes) {
+          useTimelineStore.getState().addKeyframe(
+            addedClip.id, 'position.x', kf.positionX, kf.time, kf.easing
+          );
+        }
+      }
+
+      // 7. Serialize timeline state back into the composition
+      const timelineData = useTimelineStore.getState().getSerializableState();
+      useMediaStore.setState(s => ({
+        compositions: s.compositions.map(c =>
+          c.id === comp.id ? { ...c, timelineData } : c
+        ),
+      }));
+
+      // 8. Restore previous composition
+      if (previousCompId && previousCompId !== comp.id) {
+        useMediaStore.getState().setActiveComposition(previousCompId);
+        await new Promise<void>(resolve => setTimeout(resolve, 60));
+      }
+
+      setCreatedCompId(comp.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setApplying(false);
     }
-  }, [effectiveCropPath, selectedClipId]);
+  }, [effectiveCropPath, selectedClip, mediaFile, targetRatio, clipDuration]);
+
+  // ── Open created composition ───────────────────────────────────────────────
+  const handleOpenComp = useCallback(() => {
+    if (!createdCompId) return;
+    useMediaStore.getState().openCompositionTab(createdCompId);
+  }, [createdCompId]);
 
   // ── Open adjustment modal ──────────────────────────────────────────────────
   const handleOpenAdjustModal = useCallback(() => {
@@ -307,8 +365,8 @@ export function AutoReframePanel() {
   }, [smoothing]);
 
   // ── Re-apply keyframes with new smoothing + intensity ─────────────────────
-  const handleReapply = useCallback(() => {
-    if (!appliedClipId || !analysis || !analysisSrcDims) return;
+  const handleReapply = useCallback(async () => {
+    if (!createdCompId || !analysis || !analysisSrcDims) return;
     setReapplying(true);
 
     try {
@@ -316,28 +374,51 @@ export function AutoReframePanel() {
         analysis, analysisSrcDims.w, analysisSrcDims.h,
         targetRatio, modalSmoothing, modalIntensity
       );
+      const mediaState = useMediaStore.getState();
+      const previousCompId = mediaState.activeCompositionId;
 
-      const ts = useTimelineStore.getState();
+      mediaState.setActiveComposition(createdCompId);
+      try {
+        await new Promise<void>(r => setTimeout(r, 150));
 
-      // Remove previous position.x keyframes on the clip
-      const existing = (ts.clipKeyframes.get(appliedClipId) ?? []).filter(
-        kf => kf.property === 'position.x'
-      );
-      for (const kf of existing) ts.removeKeyframe(kf.id);
+        const ts = useTimelineStore.getState();
+        const videoTrack = ts.tracks.find(t => t.type === 'video');
+        const clip = videoTrack
+          ? ts.clips
+              .filter(c => c.trackId === videoTrack.id)
+              .sort((a, b) => b.startTime - a.startTime)[0]
+          : null;
 
-      // Update scale in case targetRatio changed since initial apply
-      ts.updateClipTransform(appliedClipId, {
-        scale: { x: newPath.scale, y: newPath.scale },
-      });
+        if (clip) {
+          ts.updateClipTransform(clip.id, {
+            scale: { x: newPath.scale, y: newPath.scale },
+          });
+          const existing = (ts.clipKeyframes.get(clip.id) ?? []).filter(
+            kf => kf.property === 'position.x'
+          );
+          for (const kf of existing) {
+            useTimelineStore.getState().removeKeyframe(kf.id);
+          }
+          for (const kf of newPath.keyframes) {
+            useTimelineStore.getState().addKeyframe(
+              clip.id, 'position.x', kf.positionX, kf.time, kf.easing
+            );
+          }
+        }
 
-      // Write new keyframes
-      for (const kf of newPath.keyframes) {
-        useTimelineStore.getState().addKeyframe(
-          appliedClipId, 'position.x', kf.positionX, kf.time, kf.easing
-        );
+        const timelineData = useTimelineStore.getState().getSerializableState();
+        useMediaStore.setState(s => ({
+          compositions: s.compositions.map(c =>
+            c.id === createdCompId ? { ...c, timelineData } : c
+          ),
+        }));
+      } finally {
+        if (previousCompId && previousCompId !== createdCompId) {
+          mediaState.setActiveComposition(previousCompId);
+          await new Promise<void>(r => setTimeout(r, 60));
+        }
       }
 
-      // Sync panel preview with what was just applied
       setCropPath(newPath);
       setSmoothing(modalSmoothing);
       setShowAdjustModal(false);
@@ -346,7 +427,7 @@ export function AutoReframePanel() {
     } finally {
       setReapplying(false);
     }
-  }, [appliedClipId, analysis, analysisSrcDims, targetRatio, modalSmoothing, modalIntensity]);
+  }, [createdCompId, analysis, analysisSrcDims, targetRatio, modalSmoothing, modalIntensity]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const canAnalyze = isVideoFile && !analyzing;
@@ -500,15 +581,18 @@ export function AutoReframePanel() {
           {/* Apply button */}
           <button
             className="arp-apply-btn"
-            disabled={applying || !selectedClipId}
+            disabled={applying || !selectedClip || !mediaFile?.file}
             onClick={handleApply}
           >
-            {applying ? 'Uygulanıyor…' : 'Kadrajı Uygula'}
+            {applying ? 'Oluşturuluyor…' : 'Kompozisyon Oluştur'}
           </button>
 
-          {/* Post-apply: adjust settings */}
-          {appliedClipId && (
+          {/* Post-create actions */}
+          {createdCompId && (
             <div className="arp-post-create-row">
+              <button className="arp-open-comp-btn" onClick={handleOpenComp}>
+                Kompozisyonda Aç
+              </button>
               <button className="arp-adjust-btn" onClick={handleOpenAdjustModal}>
                 Ayarları Düzenle
               </button>
